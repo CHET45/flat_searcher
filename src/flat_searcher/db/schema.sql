@@ -147,6 +147,16 @@ CREATE TABLE IF NOT EXISTS ai_analyses (
 CREATE INDEX IF NOT EXISTS idx_ai_analyses_listing_version
 ON ai_analyses (listing_id, analysis_version);
 
+CREATE VIEW IF NOT EXISTS latest_ai_analyses AS
+SELECT ai.*
+FROM ai_analyses ai
+JOIN (
+    SELECT listing_id, MAX(id) AS latest_id
+    FROM ai_analyses
+    WHERE status = 'finished'
+    GROUP BY listing_id
+) latest ON latest.latest_id = ai.id;
+
 CREATE TABLE IF NOT EXISTS geocoding_results (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
     listing_id INTEGER NOT NULL REFERENCES listings(id) ON DELETE CASCADE,

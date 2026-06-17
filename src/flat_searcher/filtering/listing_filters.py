@@ -17,11 +17,13 @@ class ListingCandidate:
     is_rejected: bool = False
     is_viewed: bool = False
     district: str | None = None
+    street: str | None = None
     price_eur: int | None = None
     area_m2: float | None = None
     declared_rooms_ss: int | None = None
     effective_private_rooms: int | None = None
     room_conflict: bool = False
+    kitchen_living_detected: bool = False
     layout_confidence_label: LayoutConfidenceLabel | None = None
     mortgage_risk_level: MortgageRiskLevel | None = None
     stove_heating_risk: bool = False

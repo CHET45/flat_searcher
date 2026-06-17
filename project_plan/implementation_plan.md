@@ -1303,7 +1303,13 @@ The repository currently contains the first foundation and parser/storage layers
 20. Generated apartment title formatting.
 21. Filter and ranking services for synchronized ranking/map candidate sets.
 22. Serializable map marker payloads for future Leaflet integration.
-23. Fixture-based parser, repository, image, AI, geo, scoring, filtering, ranking and map tests.
+23. Persistent read repository for ranking, detail and map surfaces.
+24. UI-facing view models with English display text.
+25. CLI diagnostics for ranking, listing detail and map markers.
+26. Optional PySide6 desktop shell for ranking/detail inspection.
+27. Geocoding provider abstraction, Nominatim implementation and persistence service.
+28. Fixture-based parser, repository, image, AI, geo, scoring, filtering, ranking, map,
+    read-model and geocoding tests.
 
 ## Implementation Decisions Added During Build
 
@@ -1325,8 +1331,12 @@ The repository currently contains the first foundation and parser/storage layers
 7. Ranking and map foundations both consume filtered candidates. This keeps the product rule
    that filters decide visibility and ranking decides order.
 8. Presentation helpers intentionally produce English strings only.
+9. PySide6 is an optional UI dependency. Core parsing, storage, scoring, geocoding and tests
+   do not import PySide6.
+10. Geocoding is provider-based. Tests use fake providers; live Nominatim calls are behind the
+    `geocode-listings` CLI command.
 
 Next recommended implementation task:
 
-Connect the calculated foundations to persistent read models and then start the first
-desktop UI screens.
+Add persistent AI-analysis execution/storage commands, then connect score recalculation to
+the existing score repository tables.

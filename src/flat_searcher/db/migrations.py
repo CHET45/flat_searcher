@@ -20,6 +20,7 @@ def apply_migrations(connection: sqlite3.Connection) -> None:
             "detail_fields_json": "TEXT",
         },
     )
+    _ensure_latest_ai_view(connection)
 
 
 def _ensure_columns(
@@ -35,3 +36,19 @@ def _ensure_columns(
             connection.execute(
                 f"ALTER TABLE {table_name} ADD COLUMN {column_name} {column_definition}"
             )
+
+
+def _ensure_latest_ai_view(connection: sqlite3.Connection) -> None:
+    connection.execute(
+        """
+        CREATE VIEW IF NOT EXISTS latest_ai_analyses AS
+        SELECT ai.*
+        FROM ai_analyses ai
+        JOIN (
+            SELECT listing_id, MAX(id) AS latest_id
+            FROM ai_analyses
+            WHERE status = 'finished'
+            GROUP BY listing_id
+        ) latest ON latest.latest_id = ai.id
+        """
+    )

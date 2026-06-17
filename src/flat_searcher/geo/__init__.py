@@ -16,12 +16,16 @@ from flat_searcher.geo.location_scores import (
     shop_score,
     transport_score,
 )
+from flat_searcher.geo.geocoder import GeocodeProviderResult, Geocoder, NominatimGeocoder
 
 __all__ = [
     "AddressPrecision",
     "AddressScoreEligibility",
     "Coordinate",
     "GeocodeConfidence",
+    "GeocodeProviderResult",
+    "Geocoder",
+    "NominatimGeocoder",
     "ShopScoreInput",
     "TransportScoreInput",
     "central_station_distance_score",
