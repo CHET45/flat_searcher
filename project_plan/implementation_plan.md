@@ -1276,17 +1276,57 @@ Make the project reliable enough for repeated local use.
 
 ## Current Implemented Foundation
 
-The repository currently contains the first foundation layer:
+The repository currently contains the first foundation and parser/storage layers:
 
 1. Python package skeleton.
 2. Basic runtime configuration.
 3. CLI entry point.
-4. SQLite schema bootstrap.
+4. SQLite schema bootstrap and idempotent additive migrations.
 5. Initial database tables for listings, images, snapshots, change events, AI analysis,
    geocoding, location scores, price-value analysis, scoring profiles, score results,
    user listing states and search sessions.
 6. Original full Product Plan copied into `project_plan/source`.
+7. SS.com list parser based on saved HTML fixtures.
+8. SS.com detail parser for description, fields, listing date, unique visits and image URLs.
+9. Listing repository with upsert, snapshots, image URL metadata, user state creation and
+   change events.
+10. `sync-listings` CLI command for limited or full SS.com sync runs.
+11. Temporary image downloader with run cleanup and floor plan cache support.
+12. Internal AI schemas for Pass 1 image analysis and Pass 2 layout/mortgage analysis.
+13. Prompt builders for the two-pass Gemini pipeline.
+14. AI pipeline service over an abstract model client.
+15. Deterministic product rules for layout and mortgage flags.
+16. Address precision, distance and location score helpers.
+17. Default scoring profile, weighted score engine and core deterministic scoring blocks.
+18. Price-value market baseline foundation.
+19. User workflow state repository.
+20. Generated apartment title formatting.
+21. Filter and ranking services for synchronized ranking/map candidate sets.
+22. Serializable map marker payloads for future Leaflet integration.
+23. Fixture-based parser, repository, image, AI, geo, scoring, filtering, ranking and map tests.
+
+## Implementation Decisions Added During Build
+
+1. The current parser layer uses only the Python standard library. External HTML dependencies
+   can be introduced later if SS.com parsing becomes too brittle, but the current tree helper
+   keeps the first parser testable and dependency-light.
+2. Schema version `002` adds parser/storage fields that were missing from the initial
+   foundation: listing title, listing summary text, table metadata, detail fields and
+   `needs_ai_analysis`.
+3. If a detail page fetch fails during sync, existing detailed data is preserved instead of
+   being overwritten by empty list-page data.
+4. `sync-listings --limit N` never marks missing listings inactive. Inactive marking is only
+   safe for full syncs.
+5. Parser storage preserves raw SS.com numeric values. Impossible-looking values, such as an
+   apartment area that appears as `503 m2`, are not corrected in the parser. They should be
+   handled later by data quality, outlier and price-value scoring logic.
+6. The AI layer starts with strict internal contracts before API wiring. This keeps Gemini
+   integration replaceable and makes malformed model output testable.
+7. Ranking and map foundations both consume filtered candidates. This keeps the product rule
+   that filters decide visibility and ranking decides order.
+8. Presentation helpers intentionally produce English strings only.
 
 Next recommended implementation task:
 
-Build the SS.com parser with fixture-based tests and a `sync-listings` command.
+Connect the calculated foundations to persistent read models and then start the first
+desktop UI screens.

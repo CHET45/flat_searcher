@@ -16,6 +16,9 @@ Step 01 foundation is in progress:
 - Runtime configuration.
 - Basic CLI.
 - SQLite schema bootstrap.
+- SS.com parser and sync CLI.
+- Internal AI schemas and pipeline contract.
+- Scoring, filtering, ranking and map payload foundations.
 
 ## Local commands
 
@@ -25,6 +28,7 @@ From the repository root:
 $env:PYTHONPATH = "src"
 python -m flat_searcher show-config
 python -m flat_searcher init-db --database .\data\flat_searcher.sqlite3
+python -m flat_searcher sync-listings --database .\data\flat_searcher.sqlite3 --limit 2
 ```
 
-The user-facing application UI must use English labels only, even if internal planning notes are in Russian.
+The user-facing application UI and project-facing documentation must use English.

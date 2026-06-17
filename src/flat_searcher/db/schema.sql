@@ -23,6 +23,12 @@ CREATE TABLE IF NOT EXISTS listings (
     became_inactive_at TEXT,
     reactivated_at TEXT,
     is_new_since_last_run INTEGER NOT NULL DEFAULT 0,
+    needs_ai_analysis INTEGER NOT NULL DEFAULT 0,
+
+    listing_title TEXT,
+    listing_summary_text TEXT,
+    listing_table_metadata_json TEXT,
+    detail_fields_json TEXT,
 
     address_raw TEXT,
     district TEXT,
