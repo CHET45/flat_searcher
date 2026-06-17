@@ -1,0 +1,44 @@
+[build-system]
+requires = ["setuptools>=69", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "flat-searcher"
+version = "0.1.0"
+description = "Riga apartment analyzer for SS.com listings."
+readme = "README.md"
+requires-python = ">=3.12"
+dependencies = [
+    "httpx>=0.27",
+    "pydantic>=2.8",
+    "sqlalchemy>=2.0",
+]
+
+[project.optional-dependencies]
+ai = [
+    "google-genai>=1.0",
+]
+dev = [
+    "pytest>=8.0",
+    "ruff>=0.8",
+]
+geo = [
+    "geopy>=2.4",
+]
+ui = [
+    "PySide6>=6.7",
+]
+
+[project.scripts]
+flat-searcher = "flat_searcher.cli:main"
+
+[tool.setuptools.packages.find]
+where = ["src"]
+
+[tool.ruff]
+line-length = 100
+target-version = "py312"
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+pythonpath = ["src"]
