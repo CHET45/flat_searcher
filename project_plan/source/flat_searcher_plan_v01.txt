@@ -1,0 +1,2063 @@
+# Full Product Plan: Riga Apartment Analyzer for SS.com
+
+## 1. Product concept
+
+The project is a Python desktop application for analyzing apartments for sale in Riga.
+
+The first supported source is SS.com, specifically the Riga apartment sale section:
+
+`https://www.ss.com/lv/real-estate/flats/riga/all/sell/`
+
+The application collects apartment listings, parses their details, analyzes the listing text and images using AI, enriches listings with geodata, calculates different scores, and shows apartments in two main views:
+
+1. Ranked apartment list.
+2. Interactive Riga map with apartment markers and clusters.
+
+The application is not just a scraper or map viewer. The core value is turning chaotic apartment listings into structured apartment candidates with explainable ranking.
+
+The main user scenario is finding a good apartment for living, with a preference for mortgage suitability, reasonable price/value, usable private rooms, acceptable location, and basic infrastructure nearby.
+
+The default profile is:
+
+`For living + mortgage`
+
+## 2. Core product principle
+
+The system should not trust SS.com fields blindly.
+
+SS.com table fields are useful as initial signals: price, area, declared rooms, floor, district, street, building series, and link.
+
+The main source of deeper interpretation is:
+
+1. Listing text.
+2. Listing images.
+3. AI interpretation.
+4. Optional layout priors based on building series/type.
+5. Geodata and market comparison.
+
+The application should evaluate the real usefulness of the apartment, not only what the seller claims.
+
+Important examples:
+
+1. SS may say “2 rooms”, but AI may identify “1 private room + kitchen-living”.
+2. SS may say “3 rooms”, but AI may identify “2 private rooms + 1 walkthrough/common room”.
+3. SS may provide only a street without a house number, in which case geolocation is approximate and location-sensitive scores are not calculated.
+4. A cheap apartment may be a good opportunity, but if it is suspiciously cheaper than similar apartments, the app should show a warning.
+5. A good apartment may be a poor mortgage object, so bankability is a separate scoring block and warning layer.
+
+## 3. User interface language
+
+All user-facing UI text must be in English.
+
+Examples of labels and flags:
+
+`Confirmed`
+
+`Likely`
+
+`Unclear`
+
+`Conflict`
+
+`High mortgage risk`
+
+`Wooden building risk`
+
+`Stove heating risk`
+
+`AI: 2 private / SS: 3`
+
+`Location not calculated: approximate address`
+
+`Suspiciously low price — check carefully`
+
+`Approximate address — location scores not calculated`
+
+Internal database fields, logs, prompts and technical metadata may use any consistent naming convention, but the user interface itself should be English.
+
+## 4. SS.com data collection
+
+The application starts with the Riga apartment sale listing page on SS.com.
+
+From the listing page, the app should collect:
+
+1. Listing URL.
+2. Listing ID.
+3. District.
+4. Street.
+5. Declared room count.
+6. Area.
+7. Floor.
+8. Building series/type if available.
+9. Price.
+10. Price per square meter if available.
+11. Listing table metadata.
+
+From the detailed listing page, the app should collect:
+
+1. Full listing description.
+2. Full address data available on SS.
+3. Price.
+4. Area.
+5. Declared rooms.
+6. Floor and total floors.
+7. Series/type of building.
+8. Heating or utility-related text if present.
+9. Date of listing or update.
+10. Unique visit count.
+11. Image URLs.
+12. Raw text snapshot.
+13. Basic HTML snapshot/hash for change detection.
+14. Link to original SS listing.
+
+The application should preserve the original listing text as a source block in the apartment detail view.
+
+## 5. Caching and update logic
+
+The application should not reanalyze everything on every launch.
+
+On first launch:
+
+1. Open SS.com Riga apartment sale list.
+2. Collect all active listings.
+3. Open each detailed listing page.
+4. Store raw listing data in local database.
+5. Download images temporarily for AI analysis.
+6. Run AI analysis.
+7. Store structured AI output, confidence labels, explanations, flags and scores.
+8. Remove temporary non-plan images unless needed for debugging.
+9. Keep only necessary metadata, AI conclusions, original listing URL, text and floor plan image if found.
+
+On later launches:
+
+1. Recheck the SS.com listing page.
+2. Detect new listings.
+3. Detect removed/inactive listings.
+4. Detect changed price.
+5. Detect changed listing text.
+6. Detect changed image count.
+7. Detect changed unique visit count.
+8. Run full AI analysis only for new listings or listings that changed enough to require reanalysis.
+9. Recalculate scores.
+10. Preserve history.
+
+Images should generally not be stored permanently. Ordinary photos are used by AI internally and then removed. The exception is a floor plan image, which may be saved or cached because it directly explains the layout conclusion in the UI.
+
+## 6. Image display policy
+
+The apartment detail view should not show ordinary listing photos.
+
+Do not show:
+
+1. Room photos.
+2. Kitchen photos.
+3. Bathroom photos.
+4. Facade photos.
+5. Staircase photos.
+6. Yard photos.
+7. Street view photos.
+8. Agency collages.
+
+These images are used internally by the AI pipeline.
+
+The only image type that may be shown to the user is:
+
+`floor plan image`
+
+Reason: the floor plan directly explains the layout conclusion.
+
+The apartment detail view should include a link to the original SS listing, where the user can view all original photos.
+
+## 7. No technical AI/debug UI
+
+The user interface must not show:
+
+1. Raw AI JSON.
+2. Prompt text.
+3. Full model output.
+4. Debug logs.
+5. Internal image classification.
+6. Internal confidence tables.
+7. Technical pipeline state.
+8. “Reanalyze AI” button.
+
+These may be stored for development and diagnostics, but they are not part of the user-facing product.
+
+The user should see only human-readable conclusions, warnings, explanations and source listing text.
+
+## 8. Apartment naming format
+
+Apartment titles in the list should be generated automatically.
+
+Format:
+
+`[district] · [street] · AI: [effective rooms] / SS: [declared rooms] · [area] · [price]`
+
+Examples:
+
+`Teika · Brīvības gatve · AI: 2 private / SS: 3 · 58 m² · 112 000 €`
+
+`Imanta · Kurzemes prospekts · AI: unclear / SS: 2 · 46 m² · 82 000 €`
+
+`Purvciems · Dzelzavas iela · AI: 1 private + kitchen-living / SS: 2 · 39 m² · 74 000 €`
+
+The main room indicator is AI-effective private rooms. SS-declared rooms are shown next to it so the user can immediately see agreement or conflict.
+
+## 9. Apartment detail view structure
+
+The apartment card should contain these blocks.
+
+### 9.1 Top block
+
+Show:
+
+1. Generated apartment title.
+2. Price.
+3. Area.
+4. Price per m².
+5. District.
+6. Street.
+7. Floor.
+8. Building series/type.
+9. Listing date or update date.
+10. Link to original SS listing.
+
+### 9.2 Flags
+
+Possible flags:
+
+1. `High mortgage risk`
+2. `Stove heating risk`
+3. `Wooden building risk`
+4. `Room conflict`
+5. `Layout unclear`
+6. `Layout confirmed by floor plan`
+7. `Strong transport`
+8. `Good price`
+9. `Suspiciously low price — check carefully`
+10. `Approximate address — location scores not calculated`
+11. `AI: 2 private / SS: 3`
+12. `Kitchen-living is not counted as private room`
+
+### 9.3 Rating block
+
+Show:
+
+1. Overall score.
+2. Position in the current ranked list.
+3. Breakdown by scoring blocks.
+4. Short explanation of why the apartment is ranked this way.
+
+Example:
+
+`Score 78/100`
+
+Breakdown:
+
+`Price value +22`
+
+`Room privacy +16`
+
+`Mortgage suitability −18`
+
+`RTU accessibility +8`
+
+`Transport +11`
+
+`Shops +4`
+
+`AI confidence −3`
+
+### 9.4 Layout block
+
+Show:
+
+1. AI-effective private rooms.
+2. SS-declared rooms.
+3. Whether there is a walkthrough room.
+4. Whether kitchen-living was detected.
+5. Layout confidence label: Confirmed / Likely / Unclear / Conflict.
+6. Human-readable layout explanation.
+7. Floor plan image if found.
+
+Do not show ordinary interior photos.
+
+### 9.5 Mortgage risk block
+
+Show:
+
+1. Mortgage risk level: Low / Medium / High / Critical / Unknown.
+2. Reasons for risk.
+3. Evidence in human language.
+
+Possible reasons:
+
+1. Stove heating.
+2. Wooden building.
+3. Legal risk words in listing.
+4. Land lease.
+5. Auction.
+6. Shared ownership.
+7. Encumbrances.
+8. Building not commissioned.
+9. Poor facade condition.
+10. Low liquidity risk.
+
+### 9.6 Location block
+
+Show:
+
+1. Mini-map.
+2. Address precision.
+3. Distance to RTU if calculated.
+4. Distance to Rīga Centrālā / Origo if calculated.
+5. Nearby shops if calculated.
+6. Nearby transport if calculated.
+
+If address is not exact:
+
+`Approximate address — location scores not calculated`
+
+Then show:
+
+`RTU: not calculated`
+
+`Central station: not calculated`
+
+`Shops: not calculated`
+
+`Transport: not calculated`
+
+### 9.7 Listing history block
+
+Show:
+
+1. Price history.
+2. Unique visit history.
+3. Text changes.
+4. Image count changes.
+5. First detected date.
+6. Last checked date.
+7. Whether the listing disappeared from SS.
+8. Whether the listing returned later.
+
+Price changes should be shown as context only. They do not affect rating.
+
+### 9.8 Original listing text
+
+Show the seller’s original listing text as a source block.
+
+## 10. Two-pass Gemini AI pipeline
+
+The AI analysis uses a two-pass Gemini pipeline.
+
+### 10.1 Pass 1: image classification and grouping
+
+The first AI pass must not aggressively discard images.
+
+Interior photos are often important because layout can be inferred from small clues: floors, wallpaper, windows, doors, lighting, furniture, repeated corners, hallway transitions and room continuity.
+
+Pass 1 tasks:
+
+1. Classify all images.
+2. Find floor plan images.
+3. Mark useless images.
+4. Detect near-duplicates.
+5. Group interior photos by likely room.
+6. Detect corridor/hallway/entrance photos.
+7. Detect kitchen, bathroom and living room photos.
+8. Mark exterior/building photos.
+9. Identify photos useful for layout reasoning.
+10. Identify photos useful for building/mortgage analysis.
+
+Image categories:
+
+1. `floor_plan`
+2. `interior_room`
+3. `kitchen`
+4. `bathroom`
+5. `corridor_or_hallway`
+6. `exterior_building`
+7. `entrance_staircase`
+8. `yard_or_street_view`
+9. `duplicate_or_near_duplicate`
+10. `irrelevant_or_decorative`
+11. `agency_collage`
+
+Almost all useful interior photos should be passed to the second AI pass unless they are obvious duplicates or irrelevant.
+
+### 10.2 Pass 2: layout, mortgage and explanation reasoning
+
+The second AI pass receives:
+
+1. Full listing text.
+2. SS table fields.
+3. Useful interior photos.
+4. Floor plan image if found.
+5. Pass 1 image classification.
+6. Image groups by likely room.
+7. Exterior/building photos for building risk analysis.
+8. Optional layout priors if available.
+
+Pass 2 determines:
+
+1. Real layout.
+2. Effective private rooms.
+3. Walkthrough rooms.
+4. Kitchen-living cases.
+5. SS vs AI room conflict.
+6. Building type guess.
+7. Series guess.
+8. Wooden building risk.
+9. Stove heating risk.
+10. Mortgage risk level.
+11. Human-readable explanations.
+
+## 11. Floor plan rule
+
+If a floor plan image is found, it becomes the primary source for layout analysis.
+
+Evidence priority:
+
+1. Floor plan image.
+2. Interior photos as cross-check.
+3. Listing text.
+4. SS-declared room count.
+5. Typical layout prior.
+
+Interior photos should be used to check:
+
+1. Whether photos match the plan.
+2. Whether the plan likely belongs to the same apartment.
+3. Whether room count is confirmed.
+4. Whether walkthrough areas are visible.
+5. Whether kitchen/corridor/rooms match the plan.
+
+There is no separate user-facing `floor plan found` flag. The presence of the plan is visible through the layout explanation and the displayed floor plan image.
+
+## 12. Exterior photo use
+
+Facade and exterior photos are not used directly to determine room layout.
+
+They are used for:
+
+1. Building type guess.
+2. Series guess.
+3. Wooden building risk.
+4. Facade condition.
+5. Renovation or insulation signs.
+6. Mortgage risk.
+7. Liquidity risk.
+8. Building condition context.
+
+## 13. Internal Gemini output schema
+
+The user does not see technical JSON, but the application should store structured AI output.
+
+### 13.1 Layout fields
+
+1. `ai_detected_living_rooms`
+2. `effective_private_rooms`
+3. `walkthrough_rooms`
+4. `kitchen_living_detected`
+5. `separate_kitchen_detected`
+6. `layout_class`
+7. `layout_confidence_label`
+8. `ss_vs_ai_room_conflict`
+9. `layout_explanation_user`
+10. `floor_plan_image_ids`
+
+Layout confidence labels:
+
+1. `Confirmed`
+2. `Likely`
+3. `Unclear`
+4. `Conflict`
+
+### 13.2 Building and mortgage fields
+
+1. `building_type_guess`
+2. `series_guess`
+3. `wooden_building_risk`
+4. `stove_heating_risk`
+5. `mortgage_risk_level`
+6. `mortgage_risk_reasons`
+
+Mortgage risk levels:
+
+1. `Low`
+2. `Medium`
+3. `High`
+4. `Critical`
+5. `Unknown`
+
+### 13.3 Technical image fields
+
+Stored internally, not shown to user:
+
+1. `image_groups_by_room`
+2. `images_used_for_layout`
+3. `images_used_for_building_type`
+4. `ignored_images`
+5. `duplicate_images`
+
+## 14. Product rules for room classification
+
+### 14.1 Private room
+
+A private room is a living room that can be entered from a neutral area, such as:
+
+1. Corridor.
+2. Hallway.
+3. Entrance hall.
+4. Common non-private area.
+
+It may be:
+
+1. Bedroom.
+2. Living room.
+3. Children’s room.
+4. Office.
+5. Other usable living room.
+
+The key rule: a person should not need to pass through another person’s private room to access their own room.
+
+### 14.2 Walkthrough room
+
+A walkthrough room is a living room that must be crossed to enter another living room.
+
+For rating, walkthrough rooms are not counted as private rooms.
+
+### 14.3 Kitchen
+
+Kitchen is not counted as a living room.
+
+Kitchen quality is not evaluated as a separate factor. Kitchen size, shape or convenience does not matter unless it affects classification as kitchen-living.
+
+### 14.4 Kitchen-living / studio
+
+Kitchen-living is not counted as a full private room.
+
+Product rule:
+
+`1 bedroom + kitchen-living ≠ good 2-room apartment`
+
+It should be interpreted as:
+
+`1 private room + common kitchen-living area`
+
+### 14.5 Bathroom and kitchen access
+
+Do not complicate the model by analyzing detailed access paths to bathroom or kitchen.
+
+The main layout logic is:
+
+1. How many usable private living rooms exist.
+2. Whether any living rooms are walkthrough.
+3. Whether kitchen-living is being presented as a room.
+
+## 15. Layout scoring
+
+The default target is:
+
+`effective_private_rooms = 2`
+
+Layout scoring rules:
+
+1. Two effective private rooms are the target case.
+2. Three or more effective private rooms are good, but not a huge bonus.
+3. One effective private room is weaker for the default profile, but the listing remains visible.
+4. Unclear layout does not receive strong layout bonus, but should not collapse the overall score.
+5. SS vs AI conflict is shown as a warning.
+6. Kitchen-living plus one bedroom is not treated as a good two-room apartment.
+7. Room count influences score, but should not dominate score.
+
+The number of rooms should be configurable through profile importance. In the default profile, room privacy matters, but price/value and mortgage suitability remain highly important.
+
+## 16. Mortgage suitability / bankability
+
+The application should calculate a separate mortgage suitability score.
+
+A good apartment and a good mortgage object are not necessarily the same thing.
+
+Mortgage suitability should be represented by:
+
+1. `mortgage_bankability_score`
+2. `mortgage_risk_level`
+3. `mortgage_risk_reasons`
+
+In the default profile `For living + mortgage`, mortgage risk affects ranking but does not automatically remove the listing.
+
+High-risk listings remain visible but receive visible warnings.
+
+In the profile `Mortgage first`, mortgage risk has much stronger ranking impact.
+
+### 16.1 Risk factors
+
+Factors that reduce mortgage suitability:
+
+1. Stove heating.
+2. Wooden building.
+3. Wooden building plus stove heating.
+4. Legal risks.
+5. Land lease.
+6. Shared ownership.
+7. Encumbrances.
+8. Auction.
+9. Building not commissioned.
+10. Poor building condition.
+11. Poor facade condition.
+12. Low liquidity.
+13. Missing basic utilities.
+14. No normal bathroom/water/sewer infrastructure.
+15. Very incomplete or suspicious listing.
+
+### 16.2 Risk severity
+
+Stove heating:
+
+`High` or `Critical`
+
+Wooden building:
+
+`High`
+
+Wooden building plus stove heating:
+
+`Critical`
+
+Legal/ownership complications:
+
+`High` or `Critical`
+
+Building not commissioned:
+
+`Critical`
+
+### 16.3 UI behavior
+
+Listings with high mortgage risk:
+
+1. Are not hidden automatically.
+2. Are lowered by the mortgage suitability block.
+3. Receive a clear warning flag.
+4. Can be hidden by filters if the user chooses.
+
+## 17. Price-value scoring
+
+Price-value is the central scoring block in the default profile.
+
+There is no default budget.
+
+Do not define soft limits such as:
+
+1. Up to 100k.
+2. Up to 120k.
+3. Above 130k is bad.
+
+The default principle:
+
+`Price/value is more important than absolute cheapness.`
+
+A more expensive apartment may rank above a cheaper one if it has better €/m², better usable area, better location, better private rooms and stronger overall usefulness.
+
+### 17.1 Components of price_value_score
+
+The price-value score consists of:
+
+1. `price_per_m2_score`
+2. `relative_market_score`
+3. `price_per_effective_private_room_score`
+4. `absolute_price_score`
+5. `suspicious_low_price_flag`
+
+### 17.2 Price per m²
+
+`price_per_m2_score` is the main default price factor.
+
+It compares the apartment’s €/m² to the market and similar listings.
+
+### 17.3 Relative market score
+
+`relative_market_score` compares the listing to similar apartments.
+
+If the apartment is cheaper than comparable listings, it receives a plus.
+
+If it is more expensive, it receives less value or a negative adjustment.
+
+### 17.4 Price per effective private room
+
+Internal metric:
+
+`price_per_effective_private_room = price_eur / effective_private_rooms`
+
+Use this only when AI confidently identified effective private rooms.
+
+This metric is important for cases such as:
+
+1. `SS: 3 rooms, AI: 2 private + walkthrough`
+2. `SS: 2 rooms, AI: 1 private + kitchen-living`
+3. `SS: 2 rooms, AI: unclear`
+
+If effective rooms are unclear, do not calculate this metric to avoid false penalty.
+
+### 17.5 Absolute price score
+
+Absolute price is a weak default factor.
+
+It can be strengthened in a custom profile if the user wants cheaper apartments to rank higher.
+
+### 17.6 Suspiciously low price
+
+If a listing is far cheaper than similar apartments, it receives both:
+
+1. Positive price-value contribution.
+2. Warning flag: `Suspiciously low price — check carefully`
+
+Cheapness should not kill the rating. It should create a warning when it looks abnormal.
+
+### 17.7 Price history
+
+Price history does not affect rating.
+
+The following are context only:
+
+1. Price drop.
+2. Price increase.
+3. View growth.
+4. Listing text changed.
+5. Photo count changed.
+6. Listing disappeared and returned.
+
+They are shown in the detailed view, not used in score.
+
+## 18. Relative market comparison
+
+The system needs market baselines to decide whether a price is good.
+
+Use multiple baseline levels.
+
+### 18.1 Level 1: Riga baseline
+
+Always calculate a broad Riga baseline.
+
+Use:
+
+1. Active Riga apartment listings.
+2. Broad property type match.
+3. Outlier filtering.
+
+This ensures that price scoring works even when there are not enough close comparables.
+
+### 18.2 Level 2: district baseline
+
+Compare with listings in the same district.
+
+Suggested matching:
+
+1. Same district.
+2. Area ±20%.
+3. SS rooms ±1.
+
+### 18.3 Level 3: AI-adjusted baseline
+
+If AI confidently identified effective private rooms:
+
+1. Same effective private room count.
+2. Same district.
+3. Area ±20%.
+4. Same or similar building type if available.
+
+### 18.4 Level 4: series/building baseline
+
+If building series/type is known:
+
+1. Same series, or similar building type.
+2. Area ±20%.
+3. Same district or nearby districts.
+
+### 18.5 Exclusions from normal market baseline
+
+Critical-risk listings should not distort normal market baselines for the default profile.
+
+Exclude from normal baseline:
+
+1. Critical mortgage risk.
+2. Obvious stove heating plus wooden building.
+3. Severe legal risk.
+4. Inactive listings.
+5. Very incomplete listings.
+6. Extreme price/area outliers.
+7. Obvious data errors.
+
+These listings may still appear in the ranking if they pass filters. They are simply not used as normal comparables.
+
+### 18.6 Outlier handling
+
+Use median, percentiles or trimmed mean rather than simple average.
+
+Outlier examples:
+
+1. Clearly wrong price.
+2. Clearly wrong area.
+3. Unrealistic €/m².
+4. Share/auction/partial ownership listings.
+5. Severely incomplete listings.
+
+## 19. Scoring profiles
+
+The application should support preset and custom scoring profiles.
+
+The user changes only the importance of scoring blocks, not their direction.
+
+Each block internally knows its scoring direction.
+
+Examples:
+
+1. `Price value` knows that better value is good.
+2. `Mortgage suitability` knows that stove heating and wooden building are negative.
+3. `RTU accessibility` knows that closer is better.
+4. `Room privacy` knows that two effective private rooms are the default target.
+
+### 19.1 Default profile
+
+Default profile:
+
+`For living + mortgage`
+
+Default importance order:
+
+1. Price value.
+2. Room privacy / effective private rooms.
+3. Mortgage suitability.
+4. RTU accessibility.
+5. Transport connectivity.
+6. Central station accessibility.
+7. Shops / infrastructure.
+8. Useful area.
+9. Building / series.
+10. AI confidence.
+
+Disabled by default:
+
+1. Floor.
+2. Condition / renovation.
+3. Views.
+
+Views are not profile blocks at all.
+
+### 19.2 Preset profiles
+
+Suggested preset profiles:
+
+1. `For living + mortgage`
+2. `Mortgage first`
+3. `Maximum opportunity`
+4. `Only 2 private rooms`
+5. `Best price`
+6. `Best transport`
+7. `Closer to RTU`
+8. `Cash purchase`
+9. `Investment option`
+
+### 19.3 Custom profiles
+
+Users can create named profiles based on preset profiles.
+
+Examples:
+
+1. `My profile`
+2. `Cheap two-room search`
+3. `Mortgage without risk`
+4. `Near RTU`
+5. `Good price + normal transport`
+
+Saved profile data:
+
+1. Profile ID.
+2. Profile name.
+3. Base profile.
+4. Enabled blocks.
+5. Disabled blocks.
+6. Block importance levels.
+7. Block settings.
+8. Created date.
+9. Updated date.
+
+### 19.4 Profile editor UI
+
+Use an interactive importance scale.
+
+Scale:
+
+`Ignore | Weak factor | Medium factor | Strong factor | Critical factor`
+
+The user can:
+
+1. Drag blocks between importance levels.
+2. Place blocks next to each other to give equal importance.
+3. Disable blocks.
+4. Re-enable blocks.
+5. Save as a new profile.
+6. Rename profile.
+
+The user does not configure raw mathematical direction.
+
+## 20. Scoring blocks
+
+The standard blocks are:
+
+1. Price value.
+2. Useful area.
+3. Room privacy.
+4. Layout confidence.
+5. Mortgage suitability.
+6. RTU accessibility.
+7. Transport connectivity.
+8. Central station accessibility.
+9. Shops / infrastructure.
+10. Building / series.
+11. Floor.
+12. Condition / renovation.
+
+Views are not scoring blocks.
+
+### 20.1 Price value
+
+Evaluates:
+
+1. Absolute price.
+2. €/m².
+3. Relative market value.
+4. Price per effective private room.
+5. Price compared with similar apartments.
+
+### 20.2 Useful area
+
+Evaluates area comparatively.
+
+There is no hard lower bound.
+
+Rules:
+
+1. More area is good if price does not rise disproportionately.
+2. Smaller area is not automatically bad if price and location are good.
+3. Area should be evaluated together with price, €/m² and layout.
+
+### 20.3 Room privacy
+
+Evaluates:
+
+1. Effective private rooms.
+2. Walkthrough rooms.
+3. Kitchen-living cases.
+4. SS vs AI room mismatch.
+
+### 20.4 Layout confidence
+
+Evaluates confidence in AI layout conclusion.
+
+Uses:
+
+1. Floor plan presence.
+2. Layout evidence.
+3. AI confidence label.
+4. SS vs AI conflict.
+5. Uncertainty reason.
+
+Low confidence should create warning, but not destroy score.
+
+### 20.5 Mortgage suitability
+
+Evaluates bankability of the object.
+
+Risks include stove heating, wooden building, legal issues, land lease, encumbrances, auction, building status and poor building condition.
+
+### 20.6 RTU accessibility
+
+For MVP, this is based on distance to one main RTU point.
+
+No travel time or route planning in MVP.
+
+### 20.7 Transport connectivity
+
+For MVP, this is based on proximity and count of nearby stops if available.
+
+No route planning, intervals, schedules or travel time in MVP.
+
+### 20.8 Central station accessibility
+
+For MVP, this is based on distance to Rīga Centrālā / Origo area.
+
+### 20.9 Shops / infrastructure
+
+For MVP, this is based on nearby grocery shops.
+
+### 20.10 Building / series
+
+Evaluates:
+
+1. Building series.
+2. Building type.
+3. Material.
+4. Typical layout risk.
+5. Facade condition.
+6. Entrance/staircase condition.
+7. Potential mortgage/liquidity risks.
+
+### 20.11 Floor
+
+Disabled in default profile.
+
+Can be enabled in custom profiles.
+
+Potential custom settings:
+
+1. Penalize first floor.
+2. Penalize top floor.
+3. Prefer middle floors.
+4. Consider elevator.
+
+### 20.12 Condition / renovation
+
+Disabled in default profile.
+
+Can be used in custom profiles.
+
+The application may extract renovation state, furniture and condition, but default ranking does not use “ready to live” as a scoring factor.
+
+## 21. Score calculation logic
+
+Use a hybrid scoring model.
+
+Step 1: each scoring block returns a 0–100 score.
+
+Step 2: profile importance converts into weights.
+
+Suggested weights:
+
+1. Ignore = 0.
+2. Weak factor = 1.
+3. Medium factor = 2.
+4. Strong factor = 3.
+5. Critical factor = 5.
+
+Step 3: calculate weighted score.
+
+Step 4: apply penalties where appropriate.
+
+Step 5: apply tie-breakers when apartments are close.
+
+Formula concept:
+
+`overall_score = weighted_average(block_scores) - penalties`
+
+### 21.1 Tie-breakers
+
+If two apartments have similar scores, for example within 3–5 points, apply tie-breakers.
+
+Default profile tie-breakers:
+
+1. Better price value.
+2. Better location / RTU / transport.
+3. Better mortgage suitability.
+4. Better confirmed room privacy.
+5. More useful area at similar price.
+
+This supports the product rule that two apartments can stand near each other, but the cheaper and better-located one may be slightly higher.
+
+## 22. Filters are separate from ranking
+
+Filters do not change apartment quality or score.
+
+Filters determine what listings are visible.
+
+Ranking answers:
+
+`Which visible apartment is better?`
+
+Filters answer:
+
+`Which apartments should be shown at all?`
+
+Possible filters:
+
+1. Price from/to.
+2. Area from/to.
+3. District.
+4. SS-declared rooms.
+5. Effective private rooms.
+6. Only without room conflict.
+7. Only confirmed layout.
+8. Hide high mortgage risk.
+9. Hide stove heating.
+10. Hide wooden buildings.
+11. Only with floor plan image.
+12. Only good transport.
+13. Only near RTU.
+14. Only near central station.
+15. New today.
+16. New this week.
+17. New since last launch.
+18. Active only.
+19. Show inactive.
+20. Hide viewed.
+21. Hide rejected.
+22. Favorites only.
+
+Map and ranking must always use the same filtered listing set.
+
+## 23. Views / unique visits
+
+Views are not part of scoring.
+
+Views cannot be added to custom scoring profiles.
+
+They are only an informational indicator.
+
+User-facing block name:
+
+`View activity`
+
+Show:
+
+1. Current unique visits.
+2. Previous unique visits.
+3. Visit growth since last check.
+4. Approximate growth per day.
+5. How long the listing has been tracked.
+6. How long the listing has existed or been visible.
+
+Interpretation examples:
+
+1. `This listing is getting many new views.`
+2. `+N unique visits since last check.`
+3. `Long active listing with many views.`
+4. `Low views do not necessarily mean bad apartment.`
+
+Views do not affect score, rank or profile blocks.
+
+## 24. User statuses and workflow
+
+The application should work as a candidate management tool.
+
+Listings need user statuses.
+
+### 24.1 Required statuses for MVP
+
+1. `new`
+2. `unseen`
+3. `viewed`
+4. `favorite`
+5. `rejected`
+6. `inactive`
+
+### 24.2 Later statuses
+
+1. `check_later`
+2. `contacted_seller`
+3. `viewing_scheduled`
+4. `visited`
+5. `offer_made`
+6. `sold_or_removed`
+
+Technical listing status and user status are separate.
+
+Examples:
+
+`listing_status = active`
+
+`user_status = rejected`
+
+or:
+
+`listing_status = inactive`
+
+`user_status = favorite`
+
+### 24.3 Rejected listings
+
+Rejected listings should not be deleted.
+
+Default behavior:
+
+1. Hide rejected listings from the main ranking.
+2. Keep them in the database.
+3. Allow viewing them through filter or separate tab.
+4. Preserve history.
+
+### 24.4 New listings
+
+There should be a view:
+
+`New since last launch`
+
+On startup:
+
+1. App checks SS.
+2. Finds listings not previously in database.
+3. Assigns `new`.
+4. Shows count of new listings.
+5. Allows the user to inspect only new listings.
+
+Opening a new listing can automatically change it to `viewed`, unless it is already favorite or rejected.
+
+### 24.5 Favorites
+
+Favorites are required.
+
+Favorites should be accessible:
+
+1. In a separate tab.
+2. Through filter.
+3. On the map with special marker style.
+4. In comparison view later.
+
+Favorite is a user label, not a scoring factor.
+
+### 24.6 Notes
+
+User notes are useful after MVP.
+
+Examples:
+
+1. `Call seller`
+2. `Check heating`
+3. `Looks like agency`
+4. `Ask about land`
+5. `Bad layout but good price`
+
+Notes appear in the apartment card and can have a small icon in the list.
+
+### 24.7 Comparison view
+
+Later feature: compare 2–5 apartments.
+
+Comparison fields:
+
+1. Price.
+2. €/m².
+3. Area.
+4. Effective private rooms.
+5. Layout confidence.
+6. Mortgage risk.
+7. RTU distance.
+8. Transport.
+9. Central station.
+10. Shops.
+11. Building/series.
+12. AI summary.
+13. Flags.
+14. Pros/cons.
+
+### 24.8 Search sessions
+
+Later feature: saved search sessions.
+
+A session stores:
+
+1. Session name.
+2. Selected scoring profile.
+3. Filters.
+4. Sort mode.
+5. Hidden statuses.
+6. Created date.
+7. Updated date.
+
+Examples:
+
+1. `2-room up to 120k`
+2. `Near RTU`
+3. `Mortgage safe`
+4. `Maximum opportunity`
+
+## 25. Listing history
+
+The app should store listing history.
+
+Track:
+
+1. Price history.
+2. Unique visit history.
+3. Description changes.
+4. Image count changes.
+5. First detected date.
+6. Last checked date.
+7. Last seen on SS date.
+8. Active/inactive status.
+9. Whether the listing disappeared.
+10. Whether it returned.
+
+Suggested history snapshot:
+
+1. `listing_id`
+2. `checked_at`
+3. `price_eur`
+4. `unique_visits`
+5. `description_hash`
+6. `images_count`
+7. `is_active`
+8. `raw_snapshot_hash`
+
+Suggested change event:
+
+```json
+{
+  "event_type": "price_changed",
+  "detected_at": "2026-06-17T12:30:00",
+  "old_value": 98000,
+  "new_value": 92000,
+  "delta": -6000
+}
+```
+
+Inactive listings should not be deleted.
+
+Default behavior:
+
+1. Hide inactive listings from main ranking.
+2. Show them in an inactive tab or through filter.
+3. Keep favorites even if inactive.
+4. Preserve history.
+5. If listing returns with same SS ID, mark it active again.
+6. If it returns with a new ID but looks similar, mark as possible duplicate/relisted.
+
+## 26. Geocoding and address precision
+
+Location-sensitive scores are calculated only for exact addresses.
+
+Exact address means:
+
+`street + house number`
+
+Address precision levels:
+
+1. `exact_house`
+2. `street_approx`
+3. `district_approx`
+4. `unknown`
+
+### 26.1 exact_house
+
+Requirements:
+
+1. Street is known.
+2. House number is known.
+3. Geocode confidence is high.
+
+Behavior:
+
+1. Show normal map marker.
+2. Calculate RTU score.
+3. Calculate central station score.
+4. Calculate shop score.
+5. Calculate transport score if transport block is enabled.
+
+### 26.2 street_approx
+
+Street is known, but house number is missing.
+
+Behavior:
+
+1. Show apartment on map.
+2. Use approximate street-level coordinate, such as street center or best geocoder result.
+3. Marker must look visually different, for example transparent, dashed or with `≈`.
+4. Do not calculate location-sensitive scores.
+5. Show flag: `Approximate address — location scores not calculated`.
+
+### 26.3 district_approx
+
+Only district is known.
+
+Behavior:
+
+1. May show in district center with strong warning.
+2. Use a more approximate marker than street-level marker.
+3. Do not calculate location-sensitive scores.
+
+### 26.4 unknown
+
+No usable coordinates.
+
+Behavior:
+
+1. Do not show on map.
+2. Keep in ranking if it passes filters.
+3. Location-sensitive scores are zero/not awarded.
+
+### 26.5 Geocode confidence
+
+Add confidence levels:
+
+1. `high`
+2. `medium`
+3. `low`
+
+For MVP scoring:
+
+`exact_house + high confidence` means scores can be calculated.
+
+All other cases mean location scores are not calculated.
+
+This avoids false location bonuses from bad geocoding.
+
+## 27. Location scoring
+
+For MVP, calculate distances, not routes or travel time.
+
+Do not calculate:
+
+1. Walking time.
+2. Public transport travel time.
+3. Route planning.
+4. Transfers.
+5. Frequency.
+6. Schedules.
+7. “Can reach in 10 minutes”.
+
+### 27.1 RTU-score
+
+Use one main RTU point.
+
+`rtu_destination_mode = single_main_point`
+
+Score by distance only.
+
+Example scale:
+
+1. Up to 1 km: very strong plus.
+2. 1–2 km: strong plus.
+3. 2–4 km: normal plus.
+4. 4–7 km: weak plus.
+5. Further: almost zero.
+
+Use a smooth score, not a hard filter.
+
+### 27.2 Station-score
+
+Use Rīga Centrālā / Origo as the central station destination.
+
+Treat them as one central zone or one destination point.
+
+`station_destination_mode = central_station_zone`
+
+Score by distance only.
+
+Example scale:
+
+1. Up to 1 km: very strong plus.
+2. 1–3 km: strong plus.
+3. 3–6 km: normal plus.
+4. 6–10 km: weak plus.
+5. Further: almost zero.
+
+### 27.3 Shop-score
+
+For MVP, count grocery stores.
+
+Examples:
+
+1. Rimi.
+2. Maxima.
+3. Lidl.
+4. Mego.
+5. Elvi.
+6. Top.
+7. Beta.
+8. Mere.
+9. Other grocery/supermarket objects.
+
+Shopping centers are not a separate main scoring layer for MVP.
+
+If a grocery store inside a mall appears as a separate map object, count it.
+
+Later, a mall may provide weak infrastructure score if known to contain groceries.
+
+Suggested grocery radii:
+
+1. Up to 300 m: strong plus.
+2. 300–700 m: normal plus.
+3. 700–1200 m: weak plus.
+4. Further: zero.
+
+Also count number of shops nearby:
+
+1. One shop within 300 m is good.
+2. Several shops within 700 m is better.
+3. Many shops nearby gives high shop score.
+
+### 27.4 Transport-score
+
+For MVP, keep transport simple.
+
+Use:
+
+1. Nearby stop distance.
+2. Number of nearby stops.
+3. Number of routes only if easy to obtain.
+
+Do not use:
+
+1. Route planning.
+2. Schedules.
+3. Frequency.
+4. Intervals.
+5. Travel time to RTU.
+6. Travel time to station.
+
+If address is not exact and high-confidence, transport score is not calculated.
+
+## 28. Map
+
+The map shows only the currently filtered set of apartments.
+
+If a listing is hidden by filters, it disappears from the map.
+
+If the user enables rejected listings, rejected listings appear in both ranking and map.
+
+If the user enables inactive listings, inactive listings appear in both ranking and map if coordinates exist.
+
+Map and ranking must always be synchronized.
+
+### 28.1 Apartment markers
+
+Marker types:
+
+1. Normal marker: exact address.
+2. Approximate marker: street without house number, marked with `≈` or similar.
+3. District marker: only district known, stronger uncertainty style.
+4. Favorite marker: highlighted.
+5. Rejected marker: muted if shown.
+6. Inactive marker: grey/muted if shown.
+
+Marker color should reflect score under the currently selected profile.
+
+Approximate markers should have reduced visual confidence, for example lower opacity.
+
+### 28.2 Clusters
+
+Apartments visually close at current zoom are merged into clusters.
+
+Cluster marker must show apartment count.
+
+Example:
+
+`12`
+
+Clicking a cluster:
+
+1. Does not open a list.
+2. Does not open a popup.
+3. Zooms the map in.
+4. Continues until the cluster splits into smaller clusters or individual apartment markers.
+
+Cluster color can later be based on average or best score inside. For MVP, the required behavior is count display and zoom-in.
+
+### 28.3 Points shown on map
+
+Show:
+
+1. Apartments.
+2. Apartment clusters.
+3. Main RTU point.
+4. Rīga Centrālā / Origo.
+5. Grocery stores used in shop scoring.
+
+Transport stops are not an active custom layer for MVP.
+
+If the base map already displays stops, that is acceptable. The application should not overload the UI by placing its own stop markers at the start.
+
+## 29. Main UI tabs
+
+Suggested tabs:
+
+1. Map.
+2. Ranking.
+3. New.
+4. Favorites.
+5. Rejected.
+6. Inactive.
+7. Comparison.
+8. Profile settings.
+
+The Comparison tab can be later than MVP.
+
+## 30. Ranking list row
+
+Example row:
+
+`#12 · Purvciems · AI: 2 private / SS: 3 · 48 m² · 92 000 € · Score 78`
+
+Show:
+
+1. Position.
+2. Generated apartment title.
+3. Score for selected profile.
+4. Key flags.
+5. Price.
+6. €/m².
+7. Area.
+8. Effective private rooms.
+9. Layout confidence.
+10. Mortgage risk.
+11. RTU indicator.
+12. Transport indicator.
+13. Shop indicator.
+14. View activity indicator.
+
+Example flags:
+
+`High mortgage risk`
+
+`Layout unclear`
+
+`Room conflict: SS=3, AI=2 effective`
+
+`Good price`
+
+`Strong transport`
+
+`New`
+
+`Favorite`
+
+`Rejected`
+
+## 31. Data model overview
+
+### 31.1 Core listing fields
+
+1. `ss_id`
+2. `ss_url`
+3. `listing_status`
+4. `first_seen_at`
+5. `last_seen_at`
+6. `last_checked_at`
+7. `became_inactive_at`
+8. `reactivated_at`
+9. `is_new_since_last_run`
+
+### 31.2 Address and geodata
+
+1. `address_raw`
+2. `district`
+3. `street`
+4. `house_number`
+5. `latitude`
+6. `longitude`
+7. `geocode_precision`
+8. `geocode_confidence`
+9. `geocode_source`
+10. `geocode_explanation`
+11. `geo_scores_enabled`
+12. `geo_scores_disabled_reason`
+
+### 31.3 Location score fields
+
+1. `distance_to_rtu_m`
+2. `rtu_score`
+3. `distance_to_central_station_m`
+4. `station_score`
+5. `nearest_shop_distance_m`
+6. `shops_within_300m`
+7. `shops_within_700m`
+8. `shops_within_1200m`
+9. `shop_score`
+10. `nearest_transport_stop_distance_m`
+11. `transport_stops_nearby_count`
+12. `transport_score`
+
+### 31.4 Listing numeric fields
+
+1. `price_eur`
+2. `price_per_m2`
+3. `area_m2`
+4. `declared_rooms_ss`
+5. `floor`
+6. `total_floors`
+7. `building_series`
+8. `building_type`
+
+### 31.5 AI layout fields
+
+1. `ai_detected_living_rooms`
+2. `effective_private_rooms`
+3. `walkthrough_rooms`
+4. `kitchen_living_detected`
+5. `separate_kitchen_detected`
+6. `layout_class`
+7. `layout_confidence_label`
+8. `layout_explanation_user`
+9. `ss_vs_ai_room_conflict`
+10. `floor_plan_image_ids`
+
+### 31.6 Building and mortgage fields
+
+1. `building_type_guess`
+2. `series_guess`
+3. `building_material_detected`
+4. `wooden_building_risk`
+5. `stove_heating_risk`
+6. `heating_type`
+7. `facade_condition_score`
+8. `entrance_condition_score`
+9. `house_condition_score`
+10. `legal_risk_flags`
+11. `mortgage_bankability_score`
+12. `mortgage_risk_level`
+13. `mortgage_risk_reasons`
+
+### 31.7 Price-value fields
+
+1. `price_per_effective_private_room`
+2. `price_value_score`
+3. `price_per_m2_score`
+4. `relative_market_score`
+5. `absolute_price_score`
+6. `suspicious_low_price_flag`
+7. `market_baseline_level_used`
+8. `market_baseline_sample_size`
+9. `market_baseline_median_price_per_m2`
+10. `market_baseline_explanation`
+
+### 31.8 User workflow fields
+
+1. `user_status`
+2. `is_favorite`
+3. `is_rejected`
+4. `is_viewed`
+5. `user_notes`
+6. `last_user_opened_at`
+7. `user_tags`
+
+### 31.9 History fields
+
+1. `price_history`
+2. `visit_history`
+3. `snapshot_history`
+4. `change_events`
+5. `description_hash`
+6. `images_count`
+7. `raw_snapshot_hash`
+
+### 31.10 Score fields
+
+1. `profile_scores`
+2. `default_living_mortgage_score`
+3. `mortgage_first_score`
+4. `opportunity_score`
+5. `custom_scores`
+6. `score_breakdown`
+7. `score_explanation`
+8. `tie_breaker_explanation`
+
+## 32. Layout prior database
+
+The application may use a local database of typical building layouts.
+
+Gemini does not directly query the database. The application retrieves relevant prior layouts and includes a small number of candidates in the prompt.
+
+Pipeline:
+
+1. Extract listing features.
+2. Search local layout prior database.
+3. Retrieve 3–10 relevant candidates.
+4. Pass them to Gemini as hypotheses.
+5. Gemini uses them as supporting context, not as truth.
+
+Fields for layout prior:
+
+1. `series_name`
+2. `building_type`
+3. `construction_period`
+4. `typical_area_range`
+5. `typical_room_count`
+6. `typical_layout_variants`
+7. `walkthrough_probability`
+8. `isolated_rooms_probability`
+9. `source_url_or_note`
+10. `confidence`
+11. `example_floorplans_optional`
+12. `created_by`
+13. `verified`
+
+Important rule:
+
+Typical layout prior cannot override real evidence.
+
+If a typical Khrushchevka layout usually has walkthrough rooms, but the floor plan clearly shows two separate rooms with separate corridor access, the floor plan wins.
+
+## 33. MVP roadmap
+
+### MVP 0.1 — Parser and local database
+
+Build:
+
+1. SS.com listing page parser.
+2. Detailed listing page parser.
+3. Listing ID extraction.
+4. Price extraction.
+5. Area extraction.
+6. SS rooms extraction.
+7. Address/district/street extraction.
+8. Floor and building series extraction.
+9. Listing text extraction.
+10. Image URL extraction.
+11. Listing date extraction.
+12. Unique visits extraction.
+13. SQLite or local database storage.
+14. Active/inactive listing tracking.
+15. First seen / last seen / last checked timestamps.
+16. Price history.
+17. Unique visit history.
+18. Snapshot hashes for change detection.
+
+### MVP 0.2 — Two-pass Gemini extraction
+
+Build:
+
+1. Temporary image downloading.
+2. Pass 1 image classification.
+3. Floor plan image detection.
+4. Image grouping by likely room.
+5. Duplicate/irrelevant image marking.
+6. Exterior/building image marking.
+7. Pass 2 layout reasoning.
+8. Effective private room extraction.
+9. Walkthrough room detection.
+10. Kitchen-living detection.
+11. SS vs AI conflict detection.
+12. Layout confidence label.
+13. Building type guess.
+14. Wooden building risk detection.
+15. Stove heating risk detection.
+16. Mortgage risk level.
+17. User-facing layout explanation.
+18. User-facing mortgage explanation.
+19. Internal AI output storage.
+20. Floor plan image caching if found.
+
+### MVP 0.3 — Apartment detail view
+
+Build:
+
+1. Clean apartment card UI.
+2. Top block.
+3. Flags.
+4. Score block.
+5. Layout block.
+6. Floor plan display when available.
+7. Mortgage risk block.
+8. Location block.
+9. Listing history block.
+10. Original listing text block.
+11. Link to SS.
+12. English labels.
+13. No raw AI/debug data in UI.
+14. No ordinary listing photos in UI.
+
+### MVP 0.4 — Geocoding and address precision
+
+Build:
+
+1. Address parsing.
+2. House number detection.
+3. Geocoding.
+4. `exact_house` precision.
+5. `street_approx` precision.
+6. `district_approx` precision.
+7. `unknown` precision.
+8. Geocode confidence.
+9. Approximate coordinate handling.
+10. Exact marker vs approximate marker.
+11. Rule that only exact high-confidence addresses receive location scores.
+
+### MVP 0.5 — Location score blocks
+
+Build:
+
+1. RTU score using one main RTU point.
+2. Central station score using Rīga Centrālā / Origo.
+3. Shop score using grocery stores.
+4. Simple transport score using nearby stops.
+5. No travel time.
+6. No route planning.
+7. No schedules.
+8. No frequency calculations.
+9. Distance-based explanations.
+10. Disabled location scores for approximate addresses.
+
+### MVP 0.6 — Price-value score and market baseline
+
+Build:
+
+1. Price per m² score.
+2. Relative market score.
+3. Price per effective private room metric.
+4. Weak absolute price component.
+5. Suspiciously low price flag.
+6. Riga baseline.
+7. District baseline.
+8. Area ±20% comparison.
+9. SS rooms ±1 comparison.
+10. AI-effective room comparison when confident.
+11. Series/building comparison when available.
+12. Exclusion of critical-risk listings from normal baseline.
+13. Outlier filtering.
+14. Price-value explanation.
+
+### MVP 0.7 — Scoring blocks and default profile
+
+Build:
+
+1. Price value block.
+2. Room privacy block.
+3. Mortgage suitability block.
+4. RTU accessibility block.
+5. Transport connectivity block.
+6. Central station accessibility block.
+7. Shops/infrastructure block.
+8. Useful area block.
+9. Building/series block.
+10. AI confidence block.
+11. Default profile `For living + mortgage`.
+12. Weighted score calculation.
+13. Tie-breakers.
+14. Score breakdown.
+15. User-facing score explanation.
+
+### MVP 0.8 — Ranking list and filters
+
+Build:
+
+1. Ranked apartment table.
+2. Score by selected profile.
+3. Position in list.
+4. Flags.
+5. Breakdown expansion.
+6. Price filters.
+7. Area filters.
+8. Active/inactive filters.
+9. New/viewed/favorite/rejected filters.
+10. Mortgage risk filters.
+11. Layout filters.
+12. Transport/location filters.
+13. Confirmed layout filter.
+14. Hide rejected by default.
+15. Show only current filtered dataset.
+
+### MVP 0.9 — User statuses and workflow
+
+Build:
+
+1. New status.
+2. Unseen status.
+3. Viewed status.
+4. Favorite status.
+5. Rejected status.
+6. Inactive status.
+7. New since last launch view.
+8. Favorites view.
+9. Rejected view.
+10. Inactive view.
+11. Status transitions.
+12. Preserve rejected/inactive listings.
+13. Hide rejected from main list by default.
+
+### MVP 1.0 — Map
+
+Build:
+
+1. Riga map.
+2. Apartment markers.
+3. Exact address markers.
+4. Approximate address markers.
+5. Favorite markers.
+6. Rejected/inactive muted markers when visible.
+7. Marker color by selected profile score.
+8. Clusters.
+9. Cluster count.
+10. Cluster click zoom-in.
+11. RTU marker.
+12. Rīga Centrālā / Origo marker.
+13. Grocery store markers used in scoring.
+14. Map synchronized with filters.
+15. Indicator such as `Showing 143 of 618 apartments`.
+
+### MVP 1.1 — Preset and custom profiles
+
+Build:
+
+1. Preset profiles.
+2. Profile editor.
+3. Importance scale.
+4. Drag-and-drop blocks.
+5. Disable/enable blocks.
+6. Save custom profiles.
+7. Rename custom profiles.
+8. Recalculate ranking when profile changes.
+
+### MVP 1.2 — Notes, comparison and sessions
+
+Build:
+
+1. User notes.
+2. Notes icon in list.
+3. Comparison view for 2–5 apartments.
+4. Saved search sessions.
+5. Session profile.
+6. Session filters.
+7. Session hidden statuses.
+8. Session sort mode.
+
+## 34. Technical analysis topics to resolve next
+
+The next technical analysis should decide:
+
+1. Python desktop framework: PySide6, PyQt, or another option.
+2. Map implementation: likely embedded web map with Leaflet.
+3. Database schema: SQLite first, with possible migration layer.
+4. Scraping strategy and rate limits.
+5. HTML parsing reliability for SS.com.
+6. Image downloading strategy and temporary storage.
+7. Gemini API integration and batching.
+8. Gemini prompt format for pass 1 and pass 2.
+9. JSON schema validation and retry logic.
+10. Geocoding provider and caching.
+11. OSM/Overpass data strategy for grocery stores and stops.
+12. Main RTU coordinate.
+13. Rīga Centrālā / Origo destination coordinate.
+14. Market baseline calculation method.
+15. Outlier detection method.
+16. Score normalization formulas.
+17. Tie-breaker implementation.
+18. UI architecture for ranking, detail view and map synchronization.
+19. User profile storage.
+20. Backup/export format for database.
+
+## 35. Final product summary
+
+The application analyzes Riga apartment listings from SS.com and turns them into structured, explainable apartment candidates.
+
+It provides:
+
+1. AI-derived effective private room count.
+2. SS vs AI room conflict detection.
+3. Mortgage risk assessment.
+4. Price-value score.
+5. Relative market comparison.
+6. Location scores only when address is exact.
+7. Map with exact and approximate markers.
+8. Clustered apartment view.
+9. User statuses for real search workflow.
+10. Filters independent from ranking.
+11. Scoring profiles and custom profile editor.
+12. Clean English UI without technical AI/debug details.
+13. Original SS listing link and source text.
+14. Listing history for price, visits and changes.
+
+The main product rule:
+
+The app should help the user find good apartment opportunities without hiding uncertainty.
+
+A listing can be attractive but uncertain. A listing can be cheap but risky. A listing can have good SS room count but poor AI-effective room count. The application should not conceal these conflicts; it should rank, explain and warn clearly.

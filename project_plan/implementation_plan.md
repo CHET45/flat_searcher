@@ -1,317 +1,499 @@
-# Flat Searcher: подробный план реализации
+# Flat Searcher: Detailed Implementation Plan
 
-Источник: `C:/Users/Chtean45m/Downloads/flat_searcher_plan_v01.txt`.
+Source of truth: [original full Product Plan](source/flat_searcher_plan_v01.txt).
 
-Цель проекта: Python desktop-приложение для анализа квартир на продажу в Риге с SS.com. Продукт должен не просто собирать объявления, а превращать хаотичные данные в объяснимый рейтинг кандидатов: реальная полезность планировки, ипотечные риски, относительная цена, геоданные, история изменений, фильтры, карта и пользовательский workflow.
+This file does not replace the original specification. The original Product Plan contains
+2000+ lines of product requirements, rules, examples and edge cases. This document is the
+implementation roadmap: it groups the source requirements into technical phases that can
+be built, tested and reviewed step by step.
 
-## Базовые продуктовые правила из ТЗ
+If this roadmap and the original Product Plan disagree, the original Product Plan wins.
 
-1. UI-тексты только на английском.
-2. SS.com fields считаются первичными сигналами, но не истиной.
-3. Главные источники интерпретации: listing text, images, AI, optional layout priors, geodata, market comparison.
-4. Обычные фотографии не показываются пользователю в detail view; можно показывать только floor plan image.
-5. Raw AI JSON, prompts, debug logs и technical pipeline state не показываются в UI.
-6. Location-sensitive scores считаются только для `exact_house + high confidence`.
-7. Views / unique visits не влияют на рейтинг.
-8. Filters separate from ranking: фильтр определяет видимость, score определяет порядок внутри видимого набора.
-9. High mortgage risk не скрывает объявление автоматически, а снижает score и добавляет warning.
-10. Price history является контекстом, но не влияет на rating.
-11. Приложение должно показывать неопределенность, конфликты и риски, а не скрывать их.
+The original document is stored inside the project at:
 
-## Архитектурное решение
+`project_plan/source/flat_searcher_plan_v01.txt`
 
-Рекомендуемый стек:
+## Traceability To The Source Specification
 
-- Desktop UI: `PySide6`.
-- Map: embedded `Leaflet` through Qt WebEngine.
-- Database: SQLite first.
-- Migrations / ORM later: SQLAlchemy + Alembic.
-- HTML parsing: `httpx` + `selectolax` or BeautifulSoup fallback.
-- Data validation: Pydantic models.
-- CLI: initially standard `argparse`, later Typer if useful.
-- AI integration: separate Gemini service layer with schema validation and retries.
-- Geodata: cached geocoder + cached OSM/Overpass data for groceries and transport stops.
+1. Product concept, core principle and UI language: original sections 1-3.
+2. SS.com collection, caching and update logic: original sections 4-5.
+3. Image display policy and no technical AI/debug UI: original sections 6-7.
+4. Apartment naming and detail view: original sections 8-9.
+5. Gemini two-pass pipeline and internal schemas: original sections 10-13.
+6. Room classification and layout scoring: original sections 14-15.
+7. Mortgage suitability and bankability: original section 16.
+8. Price-value and market comparison: original sections 17-18.
+9. Profiles, scoring blocks and score formula: original sections 19-21.
+10. Filters, views, user workflow and listing history: original sections 22-25.
+11. Geocoding, location scoring and map: original sections 26-28.
+12. Main tabs, ranking rows and data model: original sections 29-31.
+13. Layout prior database: original section 32.
+14. MVP roadmap and technical decisions: original sections 33-34.
+15. Final product summary: original section 35.
 
-Проект делится на независимые слои:
+## Product Goal
 
-- `scraper`: SS.com list/detail parsing.
-- `db`: storage, schema, migrations, repositories.
-- `ai`: image classification and layout/mortgage reasoning.
-- `geo`: address parsing, geocoding, OSM enrichment.
-- `scoring`: all score blocks, profiles, explanations.
-- `ui`: PySide6 screens and Leaflet bridge.
-- `cli`: sync, analyze, recalculate, diagnostics.
-
-## Step 01. Project foundation
-
-### Цель
-
-Создать Python-основу проекта, чтобы следующие MVP не смешивали код парсера, AI, UI и базы данных.
-
-### Детали из ТЗ
-
-ТЗ требует много независимых подсистем: SS parser, caching/update logic, two-pass Gemini pipeline, geodata, scoring blocks, ranking, map, user statuses, profile settings. Поэтому первый шаг должен дать модульную структуру и базовую БД, даже если парсер еще не реализован.
-
-### Реализация
-
-1. Создать `pyproject.toml`.
-2. Создать пакет `src/flat_searcher`.
-3. Создать подпакеты `scraper`, `db`, `ai`, `geo`, `scoring`, `ui`, `models`.
-4. Добавить конфиг через environment variables.
-5. Добавить CLI-команды:
-   - `show-config`;
-   - `init-db`.
-6. Добавить базовую SQLite schema v001.
-7. Добавить `.env.example`, `.gitignore`, root `README.md`.
-8. Добавить lightweight verification через `compileall` и init-db в temporary path.
-
-### Результат
-
-Проект запускается как Python package, умеет показать конфиг и создать SQLite database со стартовой схемой.
-
-### Acceptance criteria
-
-1. `python -m flat_searcher show-config` работает при `PYTHONPATH=src`.
-2. `python -m flat_searcher init-db --database <path>` создает SQLite file.
-3. Код компилируется без syntax errors.
-4. Структура проекта готова под следующие MVP.
-
-## Step 02. SS.com parser and local database
-
-### Цель
-
-Реализовать сбор активных Riga apartment sale listings с SS.com и сохранение нормализованных данных.
-
-### Детали из ТЗ
-
-Стартовая страница:
+Flat Searcher is a Python desktop application for analyzing apartments for sale in Riga.
+The first source is the SS.com Riga apartment sale section:
 
 `https://www.ss.com/lv/real-estate/flats/riga/all/sell/`
 
-С listing page нужно собрать:
+The application must not be just a scraper or map viewer. Its core value is turning messy
+apartment listings into structured, explainable apartment candidates. The user should be
+able to understand why an apartment ranks high or low, what is uncertain, what conflicts
+with the seller's data, and which risks require manual checking.
 
-- listing URL;
-- listing ID;
-- district;
-- street;
-- declared room count;
-- area;
-- floor;
-- building series/type if available;
-- price;
-- price per square meter if available;
-- listing table metadata.
+The default search profile is:
 
-С detail page нужно собрать:
+`For living + mortgage`
 
-- full listing description;
-- full address data available on SS;
-- price;
-- area;
-- declared rooms;
-- floor and total floors;
-- series/type of building;
-- heating or utility-related text if present;
-- date of listing or update;
-- unique visit count;
-- image URLs;
-- raw text snapshot;
-- basic HTML snapshot/hash;
-- original SS listing link.
+The main target user scenario is finding a good apartment for living, with special attention
+to mortgage suitability, reasonable price/value, usable private rooms, acceptable location
+and nearby infrastructure.
 
-### Реализация
+## Core Product Rules
 
-1. Создать HTTP client with rate limit and retry.
-2. Создать saved HTML fixtures для list page и detail page.
-3. Реализовать `ListingListParser`.
-4. Реализовать `ListingDetailParser`.
-5. Нормализовать числа: price EUR, area m2, price per m2, floors, rooms.
-6. Извлекать `ss_id` из URL.
-7. Сохранять raw snapshot hashes.
-8. Сохранять original listing text as source block.
-9. Покрыть parser unit tests на fixtures.
+1. All user-facing UI text must be in English.
+2. SS.com fields are useful signals, not trusted truth.
+3. Deeper interpretation comes from listing text, images, AI, optional layout priors,
+   geodata and market comparison.
+4. The app must evaluate the real usefulness of the apartment, not only the seller's room
+   count or marketing language.
+5. Ordinary listing photos are used internally by AI and must not be shown in the apartment
+   detail view.
+6. The only image type that may be shown to the user is a floor plan image.
+7. Raw AI JSON, prompts, full model output, debug logs and technical pipeline state must not
+   be shown in the UI.
+8. The app must expose uncertainty clearly: unclear layout, SS/AI room conflict, approximate
+   address, suspicious low price and mortgage risk.
+9. High mortgage risk does not automatically hide a listing. It lowers score and adds warnings.
+10. Price history and unique visits are context only. They do not affect ranking.
+11. Filters are separate from ranking. Filters decide what is visible; ranking sorts the visible
+    set.
+12. Location-sensitive scores are calculated only for exact high-confidence addresses.
 
-### Результат
+## Recommended Architecture
 
-CLI-команда sync собирает объявления, открывает detail pages и сохраняет raw/current data в SQLite.
+The project should be built as a local analytical system with a desktop UI on top. The UI
+should not own parsing, AI analysis, geocoding or scoring logic. Each subsystem should be
+usable from CLI commands and testable without launching the GUI.
 
-### Acceptance criteria
+Recommended stack:
 
-1. Парсер работает на сохраненных fixtures без сети.
-2. Парсер умеет обработать missing house number и missing fields.
-3. Один запуск создает/обновляет listings.
-4. `ss_id` уникален.
+1. Desktop UI: `PySide6`.
+2. Map: embedded `Leaflet` through Qt WebEngine.
+3. Database: SQLite first.
+4. Data validation: `Pydantic`.
+5. Database access: initially direct SQLite helpers, later SQLAlchemy if the repository layer
+   grows.
+6. Migrations: a lightweight schema version table first, Alembic later if needed.
+7. HTML fetching: `httpx`.
+8. HTML parsing: `selectolax` or BeautifulSoup fallback.
+9. CLI: standard `argparse` initially, Typer later if the command surface grows.
+10. AI integration: isolated Gemini service layer with schema validation and retries.
+11. Geodata: cached geocoder and cached OSM/Overpass data.
+12. Tests: `pytest`, saved HTML fixtures and mocked AI/geocoder responses.
 
-## Step 03. Caching, update logic and listing history
+Recommended package layers:
 
-### Цель
+1. `scraper`: SS.com list/detail fetching and parsing.
+2. `db`: schema, bootstrap, repositories and history storage.
+3. `models`: shared typed models and enums.
+4. `ai`: Gemini prompts, schemas, image classification and layout/mortgage analysis.
+5. `geo`: address parsing, geocoding, POI cache and distance scoring.
+6. `scoring`: score blocks, profiles, penalties and explanations.
+7. `ui`: PySide6 screens, table models, detail view and map bridge.
+8. `cli`: sync, analyze, recalculate and diagnostics commands.
 
-Не переанализировать все объявления на каждом запуске и сохранять историю изменений.
+## Step 01. Project Foundation
 
-### Детали из ТЗ
+### Goal
 
-На следующих запусках нужно:
+Create the Python project foundation so later MVP work does not mix parser code, AI code,
+database code and UI code.
 
-- recheck listing page;
-- detect new listings;
-- detect removed/inactive listings;
-- detect changed price;
-- detect changed listing text;
-- detect changed image count;
-- detect changed unique visit count;
-- run full AI analysis only for new or sufficiently changed listings;
-- recalculate scores;
-- preserve history.
+### Source Requirements Covered
 
-История должна включать:
+The source specification describes many independent subsystems: SS.com parsing, caching,
+history, two-pass Gemini analysis, geocoding, market comparison, scoring profiles, ranking,
+map, filters and user workflow. A modular foundation is required before implementing any
+single feature deeply.
 
-- price history;
-- unique visit history;
-- text changes;
-- image count changes;
-- first detected date;
-- last checked date;
-- disappeared/returned state.
+### Implementation Tasks
 
-### Реализация
+1. Create `pyproject.toml`.
+2. Create the `src/flat_searcher` package.
+3. Add subpackages:
+   - `scraper`;
+   - `db`;
+   - `ai`;
+   - `geo`;
+   - `scoring`;
+   - `ui`;
+   - `models`.
+4. Add runtime configuration based on environment variables.
+5. Add basic logging.
+6. Add a CLI with at least:
+   - `show-config`;
+   - `init-db`.
+7. Add initial SQLite schema version `001`.
+8. Add project documentation and `.env.example`.
+9. Add ignored runtime folders for local database, image cache and temporary files.
+10. Verify the package compiles and the database can be initialized.
 
-1. Добавить `app_runs`.
-2. Каждый sync создает snapshot для каждого listing.
-3. Сравнивать current snapshot with previous snapshot.
-4. Создавать `listing_change_events`.
-5. Помечать missing listings as inactive.
-6. Если listing returns with same SS ID, mark active again.
-7. Подготовить field `needs_ai_analysis`.
+### Deliverables
 
-### Результат
+1. Package skeleton.
+2. Runtime configuration.
+3. SQLite schema bootstrap.
+4. Basic CLI.
+5. Project README.
+6. Planning folder with original spec and implementation roadmap.
 
-Повторный запуск обновляет только измененные сущности и сохраняет историю.
+### Acceptance Criteria
 
-### Acceptance criteria
+1. `python -m flat_searcher show-config` works with `PYTHONPATH=src`.
+2. `python -m flat_searcher init-db --database <path>` creates a SQLite database.
+3. Source files compile without syntax errors.
+4. The initial schema includes the core tables needed by future MVP steps.
 
-1. Price change создает event.
-2. Image count change создает event.
-3. Removed listing не удаляется.
-4. Returned listing снова становится active.
-5. History view сможет быть построен из таблиц.
+## Step 02. SS.com Parser And Local Database
 
-## Step 04. Temporary image downloading and floor plan cache
+### Goal
 
-### Цель
+Collect active apartment sale listings from SS.com and store normalized raw listing data in
+the local database.
 
-Подготовить изображения для AI без постоянного хранения обычных фото.
+### Source Requirements Covered
 
-### Детали из ТЗ
+The source specification requires the app to start from the Riga apartment sale page:
 
-Обычные фото используются AI internally и затем удаляются. Исключение: floor plan image может сохраняться, потому что объясняет layout conclusion в UI.
+`https://www.ss.com/lv/real-estate/flats/riga/all/sell/`
 
-### Реализация
+From the list page, the app must collect:
 
-1. Скачать images во временную папку per listing/per run.
-2. Хранить metadata: image URL, content hash, size, mime.
-3. После AI удалить ordinary images.
-4. Сохранять floor plan image asset if detected.
-5. Обновлять image count and hashes for change detection.
+1. Listing URL.
+2. Listing ID.
+3. District.
+4. Street.
+5. Declared room count.
+6. Area.
+7. Floor.
+8. Building series/type if available.
+9. Price.
+10. Price per square meter if available.
+11. Listing table metadata.
 
-### Результат
+From the detail page, the app must collect:
 
-AI получает локальные image files, но приложение не превращается в архив фото.
+1. Full listing description.
+2. Full address data available on SS.
+3. Price.
+4. Area.
+5. Declared rooms.
+6. Floor and total floors.
+7. Series/type of building.
+8. Heating or utility-related text if present.
+9. Listing date or update date.
+10. Unique visit count.
+11. Image URLs.
+12. Raw text snapshot.
+13. Basic HTML snapshot/hash.
+14. Link to the original SS listing.
 
-### Acceptance criteria
+The original listing text must be preserved as a source block for the apartment detail view.
 
-1. Temporary image directory очищается после анализа.
-2. Floor plans сохраняются отдельно.
-3. Listing detail view не имеет ordinary photo assets.
+### Implementation Tasks
 
-## Step 05. Two-pass Gemini AI pipeline
+1. Implement an HTTP client with headers, timeout, retry and respectful request pacing.
+2. Save example HTML fixtures for a listing page and several detail pages.
+3. Implement `ListingListParser`.
+4. Implement `ListingDetailParser`.
+5. Extract `ss_id` from URLs.
+6. Normalize prices, area, price per square meter, rooms and floors.
+7. Preserve raw text snapshot.
+8. Store description hash and raw HTML hash.
+9. Store image URLs separately.
+10. Add parser tests based on saved fixtures.
+11. Add a CLI command such as `sync-listings` when parser and repository code are ready.
 
-### Цель
+### Data Storage
 
-Получить структурированную AI-интерпретацию планировки, рисков здания и ипотечной пригодности.
+Use the `listings` table for current normalized values and `listing_images` for image URL
+metadata. Avoid storing ordinary image binaries at this stage.
 
-### Детали из ТЗ
+### Risks And Notes
 
-Pass 1:
+1. SS.com HTML may change, so parser tests with fixtures are essential.
+2. The site may provide street without house number, which must be stored as approximate
+   address data.
+3. Text encoding should be handled carefully because Latvian characters and currency symbols
+   matter in user-visible explanations.
 
-- classify all images;
-- find floor plan images;
-- mark useless images;
-- detect near-duplicates;
-- group interior photos by likely room;
-- detect corridor/hallway/entrance photos;
-- detect kitchen, bathroom, living room photos;
-- mark exterior/building photos;
-- identify photos useful for layout reasoning;
-- identify photos useful for building/mortgage analysis.
+### Acceptance Criteria
 
-Categories:
+1. Parser works on local fixtures without network access.
+2. Parser extracts stable `ss_id`.
+3. Missing fields do not crash parsing.
+4. Parsed data can be inserted or updated in SQLite.
+5. Original listing URL and original listing text are preserved.
 
-- `floor_plan`;
-- `interior_room`;
-- `kitchen`;
-- `bathroom`;
-- `corridor_or_hallway`;
-- `exterior_building`;
-- `entrance_staircase`;
-- `yard_or_street_view`;
-- `duplicate_or_near_duplicate`;
-- `irrelevant_or_decorative`;
-- `agency_collage`.
+## Step 03. Caching, Change Detection And Listing History
 
-Pass 2 receives listing text, SS fields, useful photos, floor plan, Pass 1 classification, image groups, exterior photos and optional layout priors.
+### Goal
+
+Avoid reprocessing everything on every launch and preserve listing history.
+
+### Source Requirements Covered
+
+On first launch, the application should collect active listings, open details, store raw data,
+download images temporarily for AI analysis, run AI analysis, store structured output, remove
+temporary ordinary images and preserve necessary metadata.
+
+On later launches, the app should:
+
+1. Recheck the SS.com listing page.
+2. Detect new listings.
+3. Detect removed or inactive listings.
+4. Detect changed price.
+5. Detect changed listing text.
+6. Detect changed image count.
+7. Detect changed unique visit count.
+8. Run full AI analysis only for new or sufficiently changed listings.
+9. Recalculate scores.
+10. Preserve history.
+
+Listing history should track:
+
+1. Price history.
+2. Unique visit history.
+3. Description changes.
+4. Image count changes.
+5. First detected date.
+6. Last checked date.
+7. Last seen date.
+8. Active/inactive status.
+9. Whether a listing disappeared.
+10. Whether it returned.
+
+### Implementation Tasks
+
+1. Create an `app_runs` record for every sync/analyze run.
+2. Create a `listing_snapshots` row for each checked listing.
+3. Compare the current snapshot with the previous snapshot.
+4. Create `listing_change_events` for:
+   - `price_changed`;
+   - `description_changed`;
+   - `image_count_changed`;
+   - `unique_visits_changed`;
+   - `listing_became_inactive`;
+   - `listing_reactivated`.
+5. Mark listings missing from the current SS.com list as inactive.
+6. Keep inactive listings in the database.
+7. Preserve favorites even if a listing becomes inactive.
+8. Add a future-ready `needs_ai_analysis` decision function.
+
+### Acceptance Criteria
+
+1. A repeated sync does not duplicate listings.
+2. Price changes create history events.
+3. Removed listings are not deleted.
+4. Returned listings become active again.
+5. History can support the detail view required by the spec.
+
+## Step 04. Image Downloading And Storage Policy
+
+### Goal
+
+Download images temporarily for AI analysis while respecting the product rule that ordinary
+listing photos are not permanently stored or shown to the user.
+
+### Source Requirements Covered
+
+The source specification says images should generally not be stored permanently. Ordinary
+photos are used internally by AI and then removed. The exception is a floor plan image, which
+may be cached because it directly explains the layout conclusion in the UI.
+
+The apartment detail view must not show:
+
+1. Room photos.
+2. Kitchen photos.
+3. Bathroom photos.
+4. Facade photos.
+5. Staircase photos.
+6. Yard photos.
+7. Street view photos.
+8. Agency collages.
+
+Only floor plan images may be shown.
+
+### Implementation Tasks
+
+1. Create a per-run temporary image directory.
+2. Download images for a listing before AI analysis.
+3. Store image metadata: URL, content hash, mime type, width and height if available.
+4. Pass local files to the AI pipeline.
+5. Delete ordinary temporary images after analysis.
+6. Preserve floor plan images identified by the AI pipeline.
+7. Store cached floor plan paths in the database.
+8. Add cleanup logic for failed or interrupted runs.
+
+### Acceptance Criteria
+
+1. Ordinary photos are removed after analysis.
+2. Floor plans can be displayed in detail view.
+3. Listing image metadata remains available for change detection.
+4. UI cannot accidentally render ordinary listing photos.
+
+## Step 05. Gemini Pass 1: Image Classification And Grouping
+
+### Goal
+
+Classify all listing images without discarding useful layout evidence too aggressively.
+
+### Source Requirements Covered
+
+The first AI pass must:
+
+1. Classify all images.
+2. Find floor plan images.
+3. Mark useless images.
+4. Detect near-duplicates.
+5. Group interior photos by likely room.
+6. Detect corridor/hallway/entrance photos.
+7. Detect kitchen, bathroom and living room photos.
+8. Mark exterior/building photos.
+9. Identify photos useful for layout reasoning.
+10. Identify photos useful for building/mortgage analysis.
+
+Image categories:
+
+1. `floor_plan`.
+2. `interior_room`.
+3. `kitchen`.
+4. `bathroom`.
+5. `corridor_or_hallway`.
+6. `exterior_building`.
+7. `entrance_staircase`.
+8. `yard_or_street_view`.
+9. `duplicate_or_near_duplicate`.
+10. `irrelevant_or_decorative`.
+11. `agency_collage`.
+
+### Implementation Tasks
+
+1. Define a Pydantic schema for Pass 1 output.
+2. Build a prompt template for image classification.
+3. Include all image IDs and metadata in the prompt.
+4. Validate Gemini output strictly.
+5. Mark useful interior photos for Pass 2.
+6. Mark exterior/building images for building risk analysis.
+7. Store technical output internally only.
+8. Persist floor plan image IDs.
+
+### Acceptance Criteria
+
+1. Pass 1 output validates against schema.
+2. Floor plan candidates are identified.
+3. Interior images useful for layout are not over-filtered.
+4. Duplicate and irrelevant images are marked.
+5. Pass 1 data is not shown in the user-facing UI.
+
+## Step 06. Gemini Pass 2: Layout, Mortgage And Explanation Reasoning
+
+### Goal
+
+Determine the real apartment layout, effective private rooms, mortgage risk and user-facing
+explanations.
+
+### Source Requirements Covered
+
+Pass 2 receives:
+
+1. Full listing text.
+2. SS table fields.
+3. Useful interior photos.
+4. Floor plan image if found.
+5. Pass 1 image classification.
+6. Image groups by likely room.
+7. Exterior/building photos for building risk analysis.
+8. Optional layout priors if available.
 
 Pass 2 determines:
 
-- real layout;
-- effective private rooms;
-- walkthrough rooms;
-- kitchen-living cases;
-- SS vs AI room conflict;
-- building type guess;
-- series guess;
-- wooden building risk;
-- stove heating risk;
-- mortgage risk level;
-- human-readable explanations.
+1. Real layout.
+2. Effective private rooms.
+3. Walkthrough rooms.
+4. Kitchen-living cases.
+5. SS vs AI room conflict.
+6. Building type guess.
+7. Series guess.
+8. Wooden building risk.
+9. Stove heating risk.
+10. Mortgage risk level.
+11. Human-readable explanations.
 
-### Реализация
+### Required Output Fields
 
-1. Создать Pydantic schemas for Pass 1 and Pass 2.
-2. Сделать Gemini client abstraction.
-3. Сделать prompt templates.
-4. Добавить strict JSON parsing.
-5. Добавить retry on invalid JSON.
-6. Сохранять raw technical output only internally.
-7. Сохранять user-facing explanations separately.
-8. Добавить analysis versioning.
+Layout fields:
 
-### Результат
+1. `ai_detected_living_rooms`.
+2. `effective_private_rooms`.
+3. `walkthrough_rooms`.
+4. `kitchen_living_detected`.
+5. `separate_kitchen_detected`.
+6. `layout_class`.
+7. `layout_confidence_label`.
+8. `ss_vs_ai_room_conflict`.
+9. `layout_explanation_user`.
+10. `floor_plan_image_ids`.
 
-Для listing появляется validated AI analysis, готовый для scoring and UI.
+Building and mortgage fields:
 
-### Acceptance criteria
+1. `building_type_guess`.
+2. `series_guess`.
+3. `wooden_building_risk`.
+4. `stove_heating_risk`.
+5. `mortgage_risk_level`.
+6. `mortgage_risk_reasons`.
 
-1. AI output валидируется.
-2. Invalid output не ломает sync.
-3. Layout confidence is one of `Confirmed`, `Likely`, `Unclear`, `Conflict`.
-4. Mortgage risk is one of `Low`, `Medium`, `High`, `Critical`, `Unknown`.
-5. UI-ready explanation не содержит raw JSON.
+### Implementation Tasks
 
-## Step 06. Product layout rules and confidence model
+1. Define Pydantic schemas for Pass 2 output.
+2. Define allowed enum values for confidence and risk levels.
+3. Build a Pass 2 prompt template.
+4. Add strict JSON parsing and retry on invalid output.
+5. Store raw model output internally.
+6. Store user-facing explanations separately.
+7. Add analysis versioning.
+8. Add failure handling so one bad listing does not break a full run.
 
-### Цель
+### Acceptance Criteria
 
-Закрепить продуктовые правила комнат как детерминированный слой поверх AI-output.
+1. `layout_confidence_label` is one of `Confirmed`, `Likely`, `Unclear`, `Conflict`.
+2. `mortgage_risk_level` is one of `Low`, `Medium`, `High`, `Critical`, `Unknown`.
+3. User-facing explanations are plain English.
+4. Raw JSON and prompts are never rendered in UI.
 
-### Детали из ТЗ
+## Step 07. Product Rules For Room Classification
 
-Private room: living room accessible from neutral area, without passing through another private room.
+### Goal
 
-Walkthrough room: living room that must be crossed to enter another living room; not counted as private room.
+Convert AI conclusions into stable product behavior for effective private rooms, walkthrough
+rooms and kitchen-living cases.
 
-Kitchen is not counted as living room.
+### Source Requirements Covered
 
-Kitchen-living is not counted as full private room.
+A private room is a living room that can be entered from a neutral area such as corridor,
+hallway or entrance hall. A person should not need to pass through another person's private
+room to access their own room.
+
+A walkthrough room is a living room that must be crossed to enter another living room. For
+rating, walkthrough rooms are not counted as private rooms.
+
+Kitchen is not counted as a living room. Kitchen quality is not scored as a separate factor.
+
+Kitchen-living is not counted as a full private room.
 
 Product rule:
 
@@ -320,187 +502,210 @@ Product rule:
 Evidence priority:
 
 1. Floor plan image.
-2. Interior photos.
+2. Interior photos as cross-check.
 3. Listing text.
 4. SS-declared room count.
 5. Typical layout prior.
 
-### Реализация
+### Implementation Tasks
 
-1. Создать deterministic post-processor for AI layout.
-2. Создать flag generation:
+1. Add deterministic post-processing after AI analysis.
+2. Generate room-related flags:
    - `Room conflict`;
    - `Layout unclear`;
    - `Layout confirmed by floor plan`;
    - `AI: 2 private / SS: 3`;
    - `Kitchen-living is not counted as private room`.
-3. Создать final normalized fields:
-   - `effective_private_rooms`;
-   - `walkthrough_rooms`;
-   - `kitchen_living_detected`;
-   - `ss_vs_ai_room_conflict`.
+3. Normalize effective private room count.
+4. Normalize walkthrough room count.
+5. Normalize kitchen-living detection.
+6. Detect conflict between SS rooms and AI-effective rooms.
 
-### Результат
+### Acceptance Criteria
 
-AI conclusion превращается в стабильные product fields and flags.
+1. Kitchen-living does not increase private room score.
+2. Walkthrough rooms are not counted as private rooms.
+3. SS/AI conflict produces a visible warning.
+4. A floor plan affects explanation and confidence.
 
-### Acceptance criteria
+## Step 08. Mortgage Suitability And Bankability
 
-1. Kitchen-living не увеличивает private room score.
-2. SS/AI conflict always generates a visible flag.
-3. Floor plan presence influences confidence, not a separate user-facing debug flag.
+### Goal
 
-## Step 07. Mortgage suitability and bankability
+Calculate mortgage suitability separately from overall apartment attractiveness.
 
-### Цель
+### Source Requirements Covered
 
-Рассчитывать ипотечную пригодность отдельно от общей привлекательности квартиры.
+Mortgage suitability should be represented by:
 
-### Детали из ТЗ
+1. `mortgage_bankability_score`.
+2. `mortgage_risk_level`.
+3. `mortgage_risk_reasons`.
 
 Risk factors:
 
-- stove heating;
-- wooden building;
-- wooden building plus stove heating;
-- legal risks;
-- land lease;
-- shared ownership;
-- encumbrances;
-- auction;
-- building not commissioned;
-- poor building condition;
-- missing utilities;
-- suspicious incomplete listing.
+1. Stove heating.
+2. Wooden building.
+3. Wooden building plus stove heating.
+4. Legal risks.
+5. Land lease.
+6. Shared ownership.
+7. Encumbrances.
+8. Auction.
+9. Building not commissioned.
+10. Poor building condition.
+11. Poor facade condition.
+12. Low liquidity.
+13. Missing utilities.
+14. No normal bathroom/water/sewer infrastructure.
+15. Very incomplete or suspicious listing.
 
 Risk severity:
 
-- stove heating: High or Critical;
-- wooden building: High;
-- wooden building plus stove heating: Critical;
-- legal/ownership complications: High or Critical;
-- building not commissioned: Critical.
+1. Stove heating: `High` or `Critical`.
+2. Wooden building: `High`.
+3. Wooden building plus stove heating: `Critical`.
+4. Legal/ownership complications: `High` or `Critical`.
+5. Building not commissioned: `Critical`.
 
-### Реализация
+### Implementation Tasks
 
-1. Создать mortgage risk rules.
-2. Объединять AI evidence and listing text keywords.
-3. Хранить `mortgage_bankability_score`.
-4. Хранить `mortgage_risk_level`.
-5. Хранить `mortgage_risk_reasons`.
-6. Генерировать human-readable evidence.
+1. Implement mortgage risk rules.
+2. Combine AI evidence with listing text keywords.
+3. Store risk level, score and reasons.
+4. Generate user-facing evidence text.
+5. Add warning flags:
+   - `High mortgage risk`;
+   - `Stove heating risk`;
+   - `Wooden building risk`.
+6. Make mortgage impact profile-dependent.
 
-### Результат
+### Acceptance Criteria
 
-Квартира может быть хорошей, но risky for mortgage, и это видно в scoring and flags.
+1. High-risk listings remain visible by default.
+2. Mortgage risk lowers ranking through the mortgage block.
+3. Reasons are visible in the apartment detail view.
+4. `Mortgage first` can make mortgage risk much more important later.
 
-### Acceptance criteria
+## Step 09. Geocoding And Address Precision
 
-1. High risk listing не скрывается automatically.
-2. Critical risk strongly lowers mortgage block.
-3. Reasons visible in detail view.
+### Goal
 
-## Step 08. Geocoding and address precision
+Determine coordinates and ensure location scoring is calculated only when the address is
+precise enough.
 
-### Цель
+### Source Requirements Covered
 
-Получить координаты и четко отделить точные адреса от приблизительных.
+Exact address means:
 
-### Детали из ТЗ
+`street + house number`
 
 Address precision levels:
 
-- `exact_house`;
-- `street_approx`;
-- `district_approx`;
-- `unknown`.
+1. `exact_house`.
+2. `street_approx`.
+3. `district_approx`.
+4. `unknown`.
 
-Only `exact_house + high confidence` enables location-sensitive scores.
+Geocode confidence levels:
 
-For `street_approx`:
+1. `high`.
+2. `medium`.
+3. `low`.
 
-- show approximate map marker;
-- do not calculate location scores;
-- show flag `Approximate address - location scores not calculated`.
+For MVP scoring, only `exact_house + high confidence` enables location scores.
 
-### Реализация
+For `street_approx`, the app may show an approximate marker but must not calculate location
+scores. The UI should show:
 
-1. Address parser extracts street and house number.
-2. Geocoder cache by normalized address.
-3. Confidence classifier.
-4. Store `geocode_precision`, `geocode_confidence`, source and explanation.
-5. Set `geo_scores_enabled`.
-6. Set disabled reason.
+`Approximate address - location scores not calculated`
 
-### Результат
+### Implementation Tasks
 
-Плохой геокодинг не дает ложных location bonuses.
+1. Parse street and house number from SS address data.
+2. Normalize address strings.
+3. Query a geocoding provider.
+4. Cache geocoding responses.
+5. Classify precision and confidence.
+6. Store latitude, longitude, source and explanation.
+7. Set `geo_scores_enabled`.
+8. Set `geo_scores_disabled_reason`.
 
-### Acceptance criteria
+### Acceptance Criteria
 
 1. Missing house number disables location scores.
-2. Approximate marker can still be shown on map.
-3. Unknown address remains in ranking if filters allow it.
+2. Approximate listings can still appear on the map.
+3. Unknown coordinate listings remain in ranking if filters allow them.
+4. The app does not give false location bonuses.
 
-## Step 09. Location scoring blocks
+## Step 10. Location Score Blocks
 
-### Цель
+### Goal
 
-Посчитать простые distance-based location scores.
+Calculate simple distance-based location scores for exact high-confidence addresses.
 
-### Детали из ТЗ
+### Source Requirements Covered
 
-MVP does not calculate:
+For MVP, the app must calculate distances, not routes or travel time.
 
-- walking time;
-- public transport travel time;
-- route planning;
-- transfers;
-- frequency;
-- schedules.
+Do not calculate:
 
-Scores:
+1. Walking time.
+2. Public transport travel time.
+3. Route planning.
+4. Transfers.
+5. Frequency.
+6. Schedules.
+7. Claims such as "can reach in 10 minutes".
 
-- RTU score by distance to one main RTU point.
-- Station score by distance to Riga Central / Origo area.
-- Shop score by grocery stores within 300m, 700m, 1200m.
-- Transport score by nearby stop distance and count if available.
+Location blocks:
 
-### Реализация
+1. RTU score using one main RTU point.
+2. Central station score using Riga Central / Origo as one destination zone.
+3. Shop score using grocery stores.
+4. Simple transport score using nearby stops.
 
-1. Define RTU destination coordinate.
-2. Define Central Station / Origo coordinate.
-3. Cache grocery POIs from OSM/Overpass.
-4. Cache transport stop POIs if available.
-5. Haversine distance calculations.
-6. Smooth scoring curves.
-7. Disable all blocks for non-exact geocodes.
+### Implementation Tasks
 
-### Результат
+1. Define main RTU coordinate.
+2. Define central station / Origo coordinate.
+3. Build Haversine distance utilities.
+4. Cache grocery stores from OSM/Overpass.
+5. Cache transport stops from OSM/Overpass if practical.
+6. Count shops within 300m, 700m and 1200m.
+7. Count nearby transport stops if data is available.
+8. Calculate smooth scores instead of hard filters.
+9. Generate user-facing explanations.
+10. Disable scoring for non-exact addresses.
 
-Location block in detail view and scoring blocks get stable distance-based values.
+### Acceptance Criteria
 
-### Acceptance criteria
+1. Approximate addresses show disabled location scores.
+2. RTU, station, shop and transport blocks explain distance-based values.
+3. No route-time or schedule claims appear in UI.
 
-1. Scores are null/disabled for approximate address.
-2. Distance explanations are user-facing.
-3. No route/travel-time claims are shown.
+## Step 11. Price-Value Score And Market Baselines
 
-## Step 10. Price-value score and market baselines
+### Goal
 
-### Цель
+Score value relative to the market and apartment usefulness, not just absolute cheapness.
 
-Рассчитать value не по абсолютной дешевизне, а относительно рынка и полезности.
+### Source Requirements Covered
 
-### Детали из ТЗ
+There is no default budget. Do not define soft limits such as up to 100k, up to 120k or
+above 130k is bad.
+
+Default principle:
+
+`Price/value is more important than absolute cheapness.`
 
 Components:
 
-- `price_per_m2_score`;
-- `relative_market_score`;
-- `price_per_effective_private_room_score`;
-- `absolute_price_score`;
-- `suspicious_low_price_flag`.
+1. `price_per_m2_score`.
+2. `relative_market_score`.
+3. `price_per_effective_private_room_score`.
+4. `absolute_price_score`.
+5. `suspicious_low_price_flag`.
 
 Baseline levels:
 
@@ -509,66 +714,67 @@ Baseline levels:
 3. AI-adjusted baseline.
 4. Series/building baseline.
 
-Exclude from normal baselines:
+Exclude from normal market baselines:
 
-- critical mortgage risk;
-- wooden + stove heating;
-- severe legal risk;
-- inactive listings;
-- incomplete listings;
-- extreme outliers;
-- data errors.
+1. Critical mortgage risk.
+2. Obvious stove heating plus wooden building.
+3. Severe legal risk.
+4. Inactive listings.
+5. Very incomplete listings.
+6. Extreme price/area outliers.
+7. Obvious data errors.
 
-Use median, percentiles or trimmed mean.
+Use median, percentiles or trimmed mean rather than simple average.
 
-### Реализация
+### Implementation Tasks
 
-1. Build comparable listing selector.
-2. Add outlier filtering.
-3. Compute median price/m2 at multiple levels.
-4. Pick strongest reliable baseline by sample size.
-5. Calculate price per effective private room only when AI confidence allows it.
-6. Flag suspiciously low prices without killing score.
-7. Store baseline explanation.
+1. Build comparable listing selectors for each baseline level.
+2. Implement outlier detection.
+3. Compute median price per square meter.
+4. Choose the strongest reliable baseline by sample size.
+5. Calculate price per effective private room only when room confidence is sufficient.
+6. Calculate suspiciously low price warning.
+7. Store baseline level, sample size, median and explanation.
+8. Ensure price history is not used in rating.
 
-### Результат
+### Acceptance Criteria
 
-Cheap listings can rank well but receive warning if abnormal.
+1. Cheap listings can receive positive value score.
+2. Abnormally cheap listings also receive warning.
+3. Absolute price is a weak default factor.
+4. Price history remains context only.
 
-### Acceptance criteria
+## Step 12. Scoring Profiles And Weighted Score Engine
 
-1. No default budget threshold like 100k/120k.
-2. Suspicious low price gives both positive value and warning.
-3. Price history does not affect rating.
+### Goal
 
-## Step 11. Scoring blocks and profiles
+Create a profile-based score engine where each block returns a score and the profile controls
+importance.
 
-### Цель
+### Source Requirements Covered
 
-Создать общий weighted scoring engine.
+The user changes only the importance of scoring blocks, not their direction.
 
-### Детали из ТЗ
+Importance levels:
 
-Each block returns 0-100.
+1. `Ignore` = 0.
+2. `Weak factor` = 1.
+3. `Medium factor` = 2.
+4. `Strong factor` = 3.
+5. `Critical factor` = 5.
 
-Profile importance:
-
-- Ignore = 0;
-- Weak factor = 1;
-- Medium factor = 2;
-- Strong factor = 3;
-- Critical factor = 5.
-
-Formula:
+Formula concept:
 
 `overall_score = weighted_average(block_scores) - penalties`
 
-Default profile: `For living + mortgage`.
+Default profile:
+
+`For living + mortgage`
 
 Default importance order:
 
 1. Price value.
-2. Room privacy.
+2. Room privacy / effective private rooms.
 3. Mortgage suitability.
 4. RTU accessibility.
 5. Transport connectivity.
@@ -580,377 +786,507 @@ Default importance order:
 
 Disabled by default:
 
-- Floor;
-- Condition / renovation;
-- Views.
+1. Floor.
+2. Condition / renovation.
+3. Views.
 
-### Реализация
+Views are not profile blocks at all.
 
-1. Implement block interface.
-2. Implement default profile.
-3. Implement weighted average.
-4. Implement penalties.
-5. Implement tie-breakers.
-6. Store score breakdown and explanation.
+### Implementation Tasks
 
-### Результат
+1. Define a scoring block interface.
+2. Implement core blocks:
+   - price value;
+   - useful area;
+   - room privacy;
+   - layout confidence;
+   - mortgage suitability;
+   - RTU accessibility;
+   - transport connectivity;
+   - central station accessibility;
+   - shops / infrastructure;
+   - building / series;
+   - floor;
+   - condition / renovation.
+3. Implement default built-in profile.
+4. Implement weighted average.
+5. Implement penalties.
+6. Implement tie-breakers.
+7. Store score breakdown and explanation.
 
-Ranking can sort by selected profile with explainable breakdown.
+### Acceptance Criteria
 
-### Acceptance criteria
+1. Every active block returns `0..100`.
+2. Views cannot affect score.
+3. Filters do not alter score.
+4. Tie-breakers are applied only when scores are close.
+5. Score breakdown is available for the detail view.
 
-1. Views cannot be scoring block.
-2. Filters do not change score.
-3. Close scores use tie-breaker explanation.
+## Step 13. Apartment Detail View
 
-## Step 12. Apartment detail view
+### Goal
 
-### Цель
+Create a clean detail view that explains the apartment without exposing technical internals.
 
-Создать readable apartment card without debug/technical noise.
+### Source Requirements Covered
 
-### Детали из ТЗ
+The apartment detail card must include:
 
-Blocks:
-
-- top block;
-- flags;
-- rating block;
-- layout block;
-- mortgage risk block;
-- location block;
-- listing history block;
-- original listing text.
+1. Top block.
+2. Flags.
+3. Rating block.
+4. Layout block.
+5. Mortgage risk block.
+6. Location block.
+7. Listing history block.
+8. Original listing text.
 
 Top block shows:
 
-- generated title;
-- price;
-- area;
-- price per m2;
-- district;
-- street;
-- floor;
-- building series/type;
-- listing date/update date;
-- original SS link.
+1. Generated apartment title.
+2. Price.
+3. Area.
+4. Price per square meter.
+5. District.
+6. Street.
+7. Floor.
+8. Building series/type.
+9. Listing date or update date.
+10. Link to original SS listing.
 
-Do not show ordinary listing photos. Show only floor plan if found.
+The layout block shows:
 
-### Реализация
+1. AI-effective private rooms.
+2. SS-declared rooms.
+3. Walkthrough room status.
+4. Kitchen-living status.
+5. Confidence label.
+6. Human-readable explanation.
+7. Floor plan image if found.
 
-1. Build PySide6 detail screen.
-2. Map database fields to English labels.
-3. Render flags.
-4. Render score breakdown.
-5. Render floor plan image if cached.
-6. Render source listing text.
-7. Link opens original SS listing.
+The UI must not show raw AI JSON, prompt text, full model output, debug logs, internal image
+classification, confidence tables or technical pipeline state.
 
-### Результат
+### Implementation Tasks
 
-User can inspect why apartment is ranked and what uncertainty exists.
+1. Build the PySide6 detail screen.
+2. Define English labels for every field.
+3. Render generated title.
+4. Render flags.
+5. Render score breakdown.
+6. Render layout explanation.
+7. Render floor plan image only when available.
+8. Render mortgage risk reasons.
+9. Render disabled location score explanations.
+10. Render listing history.
+11. Render original listing text.
+12. Add original SS.com link.
 
-### Acceptance criteria
+### Acceptance Criteria
 
-1. No raw AI JSON.
-2. No prompt text.
-3. No ordinary photos.
-4. English labels only.
+1. All UI labels are English.
+2. Ordinary listing photos are never shown.
+3. Floor plan image can be shown.
+4. Raw AI/debug information is hidden.
+5. The original listing text is preserved and visible.
 
-## Step 13. Ranking list and filters
+## Step 14. Ranking List And Filters
 
-### Цель
+### Goal
 
-Создать основной рабочий список квартир.
+Create the main ranked apartment list and filter controls.
 
-### Детали из ТЗ
+### Source Requirements Covered
 
 Example row:
 
-`#12 · Purvciems · AI: 2 private / SS: 3 · 48 m2 · 92 000 EUR · Score 78`
+`#12 - Purvciems - AI: 2 private / SS: 3 - 48 m2 - 92 000 EUR - Score 78`
 
-Show:
+The row should show:
 
-- position;
-- generated apartment title;
-- score;
-- key flags;
-- price;
-- EUR/m2;
-- area;
-- effective private rooms;
-- layout confidence;
-- mortgage risk;
-- RTU indicator;
-- transport indicator;
-- shop indicator;
-- view activity indicator.
+1. Position.
+2. Generated apartment title.
+3. Score for selected profile.
+4. Key flags.
+5. Price.
+6. EUR/m2.
+7. Area.
+8. Effective private rooms.
+9. Layout confidence.
+10. Mortgage risk.
+11. RTU indicator.
+12. Transport indicator.
+13. Shop indicator.
+14. View activity indicator.
 
-Filters:
+Possible filters:
 
-- price;
-- area;
-- district;
-- SS rooms;
-- effective private rooms;
-- room conflict;
-- confirmed layout;
-- mortgage risk;
-- stove heating;
-- wooden buildings;
-- floor plan;
-- transport;
-- RTU;
-- central station;
-- new today/week/since launch;
-- active/inactive;
-- viewed/rejected/favorites.
+1. Price from/to.
+2. Area from/to.
+3. District.
+4. SS-declared rooms.
+5. Effective private rooms.
+6. Only without room conflict.
+7. Only confirmed layout.
+8. Hide high mortgage risk.
+9. Hide stove heating.
+10. Hide wooden buildings.
+11. Only with floor plan image.
+12. Only good transport.
+13. Only near RTU.
+14. Only near central station.
+15. New today.
+16. New this week.
+17. New since last launch.
+18. Active only.
+19. Show inactive.
+20. Hide viewed.
+21. Hide rejected.
+22. Favorites only.
 
-### Реализация
+### Implementation Tasks
 
-1. Create query builder for filtered dataset.
-2. Ranking and map consume same filtered dataset.
-3. Add row renderer.
-4. Add filter panel.
-5. Hide rejected by default.
-6. Active-only by default.
+1. Build a query service for the currently filtered dataset.
+2. Build the ranking table model.
+3. Add position calculation within the filtered set.
+4. Add filter state model.
+5. Add filter UI.
+6. Hide rejected by default.
+7. Show active listings by default.
+8. Ensure map and ranking consume the same filtered dataset.
 
-### Результат
+### Acceptance Criteria
 
-User can narrow candidates without corrupting score semantics.
+1. Filters decide visibility only.
+2. Ranking answers "which visible apartment is better?"
+3. Map and ranking are synchronized.
+4. Rejected listings are hidden by default but not deleted.
 
-### Acceptance criteria
+## Step 15. User Statuses And Workflow
 
-1. Filter state affects visible rows only.
-2. Position recalculates inside current visible set.
-3. Hidden listings disappear from map too.
+### Goal
 
-## Step 14. User statuses and workflow
+Turn the app into a candidate management tool for an apartment search.
 
-### Цель
-
-Сделать приложение candidate management tool, not only analyzer.
-
-### Детали из ТЗ
+### Source Requirements Covered
 
 Required MVP statuses:
 
-- `new`;
-- `unseen`;
-- `viewed`;
-- `favorite`;
-- `rejected`;
-- `inactive`.
+1. `new`.
+2. `unseen`.
+3. `viewed`.
+4. `favorite`.
+5. `rejected`.
+6. `inactive`.
 
 Technical listing status and user status are separate.
 
 Rejected listings:
 
-- not deleted;
-- hidden from main ranking by default;
-- visible through filter or tab;
-- preserve history.
+1. Are hidden from the main ranking by default.
+2. Stay in the database.
+3. Can be viewed through a filter or separate tab.
+4. Preserve history.
 
 Favorites:
 
-- separate tab;
-- filter;
-- special map marker;
-- later comparison view.
+1. Appear in a separate tab.
+2. Are available through a filter.
+3. Have a special map marker style.
+4. Remain preserved even when inactive.
 
-### Реализация
+### Implementation Tasks
 
-1. Add user state table.
-2. Add actions: favorite, reject, mark viewed.
-3. Add tabs New, Favorites, Rejected, Inactive.
-4. Opening new listing marks viewed unless favorite/rejected.
-5. Preserve favorites even if inactive.
+1. Create user state repository.
+2. Add actions:
+   - mark viewed;
+   - favorite/unfavorite;
+   - reject/unreject.
+3. Add New tab.
+4. Add Favorites tab.
+5. Add Rejected tab.
+6. Add Inactive tab.
+7. Mark opened new listings as viewed unless favorite/rejected.
+8. Preserve favorite state independently from listing active status.
 
-### Результат
+### Acceptance Criteria
 
-User can manage a real apartment search workflow.
+1. Inactive favorites remain accessible.
+2. Rejected listings remain in the database.
+3. New since last launch can be displayed.
+4. User workflow fields do not affect score.
 
-### Acceptance criteria
+## Step 16. Geodata-Aware Map
 
-1. Inactive favorite remains visible in Favorites.
-2. Rejected listing remains in DB.
-3. New since last launch is calculated from app runs.
+### Goal
 
-## Step 15. Map
+Show apartments on a synchronized Riga map with markers, clusters and uncertainty styles.
 
-### Цель
+### Source Requirements Covered
 
-Показать synchronized map of currently filtered apartments.
-
-### Детали из ТЗ
+The map shows only the currently filtered set of apartments. If a listing is hidden by filters,
+it disappears from the map.
 
 Marker types:
 
-- normal exact address;
-- approximate marker with uncertainty style;
-- district marker;
-- favorite marker;
-- rejected muted marker;
-- inactive muted marker.
+1. Normal marker for exact address.
+2. Approximate marker for street without house number.
+3. District marker for district-only precision.
+4. Favorite marker.
+5. Rejected marker, muted if shown.
+6. Inactive marker, grey/muted if shown.
 
-Marker color reflects score under current profile.
+Marker color should reflect score under the current profile. Approximate markers should have
+reduced visual confidence.
 
 Clusters:
 
-- show apartment count;
-- click zooms in;
-- no cluster popup/list for MVP.
+1. Show apartment count.
+2. Click zooms in.
+3. Cluster click does not open a list or popup in MVP.
 
-Map points:
+Map should show:
 
-- apartments;
-- clusters;
-- RTU point;
-- Riga Central / Origo;
-- grocery stores used in shop scoring.
+1. Apartments.
+2. Clusters.
+3. Main RTU point.
+4. Riga Central / Origo.
+5. Grocery stores used in scoring.
 
-### Реализация
+### Implementation Tasks
 
-1. Embed Leaflet in PySide6 WebEngine.
-2. Send filtered listings as JSON to map.
-3. Implement marker styles.
-4. Implement marker clustering.
-5. Add click-to-select listing.
-6. Add `Showing X of Y apartments`.
+1. Embed Leaflet in a PySide6 WebEngine view.
+2. Build a Python-to-JavaScript bridge or regenerate map JSON.
+3. Send filtered listing data to the map.
+4. Implement marker styles.
+5. Implement marker clustering.
+6. Implement cluster zoom behavior.
+7. Add special markers for RTU, station and grocery stores.
+8. Add indicator such as `Showing 143 of 618 apartments`.
 
-### Результат
+### Acceptance Criteria
 
-Ranking and map are two views of the same filtered candidate set.
-
-### Acceptance criteria
-
-1. Hidden by filter means hidden on map.
-2. Approximate markers are visually different.
+1. Map and ranking use the same filtered dataset.
+2. Approximate markers are visually distinct.
 3. Cluster click zooms in.
+4. Rejected/inactive markers are muted when shown.
 
-## Step 16. Preset and custom profiles
+## Step 17. Preset And Custom Profiles
 
-### Цель
+### Goal
 
-Дать пользователю менять importance, not raw scoring direction.
+Allow different search strategies while keeping scoring directions controlled by the app.
 
-### Детали из ТЗ
+### Source Requirements Covered
 
 Preset profiles:
 
-- `For living + mortgage`;
-- `Mortgage first`;
-- `Maximum opportunity`;
-- `Only 2 private rooms`;
-- `Best price`;
-- `Best transport`;
-- `Closer to RTU`;
-- `Cash purchase`;
-- `Investment option`.
+1. `For living + mortgage`.
+2. `Mortgage first`.
+3. `Maximum opportunity`.
+4. `Only 2 private rooms`.
+5. `Best price`.
+6. `Best transport`.
+7. `Closer to RTU`.
+8. `Cash purchase`.
+9. `Investment option`.
 
-Profile editor scale:
+The profile editor uses:
 
 `Ignore | Weak factor | Medium factor | Strong factor | Critical factor`
 
-### Реализация
+The user can:
 
-1. Store profile definitions in DB.
-2. Add editor UI.
-3. Drag blocks between importance levels.
-4. Disable/enable blocks.
-5. Save/rename custom profile.
-6. Recalculate ranking on profile change.
+1. Drag blocks between importance levels.
+2. Place blocks next to each other to give equal importance.
+3. Disable blocks.
+4. Re-enable blocks.
+5. Save as a new profile.
+6. Rename profile.
 
-### Результат
+The user does not configure raw mathematical direction.
 
-Different search strategies can reuse same analyzed data.
+### Implementation Tasks
 
-### Acceptance criteria
+1. Store built-in profiles.
+2. Store custom profiles.
+3. Build a profile selector.
+4. Build profile editor UI.
+5. Add block enable/disable support.
+6. Add profile save and rename.
+7. Recalculate ranking when the selected profile changes.
+8. Update marker colors when the profile changes.
 
-1. User cannot reverse block meaning.
-2. Custom profile persists.
-3. Profile change updates ranking and marker colors.
+### Acceptance Criteria
 
-## Step 17. Notes, comparison and sessions
+1. Custom profiles persist.
+2. Profile changes update ranking and map colors.
+3. User cannot invert block direction.
+4. Views remain unavailable as a scoring block.
 
-### Цель
+## Step 18. Notes, Comparison And Search Sessions
 
-Добавить удобства для длительного поиска.
+### Goal
 
-### Детали из ТЗ
+Support longer apartment search workflows after the core MVP is usable.
+
+### Source Requirements Covered
 
 Notes examples:
 
-- `Call seller`;
-- `Check heating`;
-- `Ask about land`;
-- `Bad layout but good price`.
+1. `Call seller`.
+2. `Check heating`.
+3. `Looks like agency`.
+4. `Ask about land`.
+5. `Bad layout but good price`.
 
-Comparison view compares 2-5 apartments by:
+Comparison view should compare 2-5 apartments by:
 
-- price;
-- EUR/m2;
-- area;
-- effective private rooms;
-- layout confidence;
-- mortgage risk;
-- RTU distance;
-- transport;
-- central station;
-- shops;
-- building/series;
-- AI summary;
-- flags;
-- pros/cons.
+1. Price.
+2. EUR/m2.
+3. Area.
+4. Effective private rooms.
+5. Layout confidence.
+6. Mortgage risk.
+7. RTU distance.
+8. Transport.
+9. Central station.
+10. Shops.
+11. Building/series.
+12. AI summary.
+13. Flags.
+14. Pros/cons.
 
 Search sessions store:
 
-- session name;
-- selected scoring profile;
-- filters;
-- sort mode;
-- hidden statuses;
-- created/updated date.
+1. Session name.
+2. Selected scoring profile.
+3. Filters.
+4. Sort mode.
+5. Hidden statuses.
+6. Created date.
+7. Updated date.
 
-### Реализация
+### Implementation Tasks
 
-1. Add user notes table and UI.
-2. Add comparison basket.
-3. Add comparison tab.
-4. Add saved sessions.
-5. Restore filters/profile from session.
+1. Add user notes UI.
+2. Show note indicator in ranking rows.
+3. Add comparison basket.
+4. Add comparison tab for 2-5 apartments.
+5. Add saved search sessions.
+6. Restore profile, filters and sort mode from a session.
 
-### Результат
+### Acceptance Criteria
 
-Приложение становится полноценным рабочим инструментом для выбора квартиры.
+1. Notes are visible in detail view.
+2. Notes can be indicated in the ranking list.
+3. Comparison supports 2-5 apartments.
+4. Search sessions restore filters and profile.
 
-### Acceptance criteria
+## Step 19. Layout Prior Database
 
-1. Notes visible in detail and list indicator.
-2. Comparison supports 2-5 apartments.
-3. Session restores filters and profile.
+### Goal
 
-## Step 18. Testing, reliability and packaging
+Add optional local knowledge about typical building layouts without allowing it to override
+real listing evidence.
 
-### Цель
+### Source Requirements Covered
 
-Сделать проект устойчивым к изменениям SS.com, сетевым ошибкам, AI failures and user data loss.
+The application may use a local database of typical building layouts. Gemini does not query
+this database directly. The application retrieves relevant prior layouts and includes a small
+number of candidates in the prompt.
 
-### Реализация
+Pipeline:
 
-1. Parser tests on fixtures.
-2. DB migration tests.
-3. Scoring unit tests.
-4. AI schema validation tests with mocked Gemini.
-5. Geocoding cache tests.
-6. UI smoke tests where practical.
-7. Backup/export command for SQLite DB.
-8. Packaging strategy for Windows.
+1. Extract listing features.
+2. Search local layout prior database.
+3. Retrieve 3-10 relevant candidates.
+4. Pass them to Gemini as hypotheses.
+5. Gemini uses them as supporting context, not truth.
 
-### Acceptance criteria
+Important rule:
+
+Typical layout prior cannot override real evidence.
+
+### Implementation Tasks
+
+1. Create `layout_priors` table.
+2. Store fields:
+   - series name;
+   - building type;
+   - construction period;
+   - typical area range;
+   - typical room count;
+   - typical layout variants;
+   - walkthrough probability;
+   - isolated rooms probability;
+   - source note;
+   - confidence;
+   - verified flag.
+3. Build lookup by series/building type/area/room count.
+4. Add a compact prior summary to the Pass 2 prompt.
+5. Add tests that floor plan evidence wins over priors.
+
+### Acceptance Criteria
+
+1. Layout priors are optional.
+2. Gemini receives priors only as hypotheses.
+3. Floor plan and real images override priors.
+
+## Step 20. Testing, Reliability And Packaging
+
+### Goal
+
+Make the project reliable enough for repeated local use.
+
+### Implementation Tasks
+
+1. Parser tests using saved SS.com HTML fixtures.
+2. Database bootstrap tests.
+3. Change detection tests.
+4. AI schema validation tests with mocked Gemini output.
+5. Scoring unit tests.
+6. Geocoding cache tests.
+7. Map data serialization tests.
+8. Basic UI smoke tests where practical.
+9. Backup/export command for SQLite database.
+10. Windows packaging strategy after the MVP stabilizes.
+
+### Acceptance Criteria
 
 1. Existing analyzed listings survive app updates.
-2. Invalid AI response does not break full run.
-3. SS layout change is detected by parser test failures.
-4. User can backup/export local database.
+2. Invalid AI response does not break a full run.
+3. SS.com HTML changes are detected by parser test failures.
+4. User can back up/export the local database.
+5. Runtime data is not accidentally committed.
+
+## Suggested Build Order
+
+1. Finish Step 01 foundation.
+2. Build Step 02 parser with local fixtures before heavy UI work.
+3. Add Step 03 history and change detection.
+4. Add Step 04 image downloading.
+5. Add Steps 05-08 AI layout and mortgage analysis.
+6. Add Steps 11-12 price-value and scoring.
+7. Build Step 13 detail view and Step 14 ranking list.
+8. Add Steps 09-10 geocoding and location scores.
+9. Add Step 16 map.
+10. Add Step 15 workflow statuses.
+11. Add profiles, notes, comparison and sessions after the core loop works.
+
+## Current Implemented Foundation
+
+The repository currently contains the first foundation layer:
+
+1. Python package skeleton.
+2. Basic runtime configuration.
+3. CLI entry point.
+4. SQLite schema bootstrap.
+5. Initial database tables for listings, images, snapshots, change events, AI analysis,
+   geocoding, location scores, price-value analysis, scoring profiles, score results,
+   user listing states and search sessions.
+6. Original full Product Plan copied into `project_plan/source`.
+
+Next recommended implementation task:
+
+Build the SS.com parser with fixture-based tests and a `sync-listings` command.
