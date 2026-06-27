@@ -4,6 +4,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 
+from flat_searcher.ai import LayoutConfidenceLabel, MortgageRiskLevel
 from flat_searcher.db.read_models import ListingDetailReadModel
 from flat_searcher.filtering import ListingCandidate
 from flat_searcher.presentation.titles import format_apartment_title
@@ -22,6 +23,7 @@ class RankingRowViewModel:
     layout_text: str
     mortgage_text: str
     status_text: str
+    flags_text: str
 
 
 @dataclass(frozen=True)
@@ -45,14 +47,43 @@ def ranking_row_view_model(ranked: RankedCandidate) -> RankingRowViewModel:
         title=_title_from_candidate(candidate),
         score_text=_score_text(candidate.score),
         price_text=_price_text(candidate.price_eur),
-        price_per_m2_text="unknown",
+        price_per_m2_text=_price_per_m2_text(
+            _derive_price_per_m2(candidate.price_eur, candidate.area_m2)
+        ),
         area_text=_area_text(candidate.area_m2),
         layout_text=_layout_text(candidate),
         mortgage_text=(
             "Unknown" if candidate.mortgage_risk_level is None else candidate.mortgage_risk_level.value
         ),
         status_text=candidate.user_status,
+        flags_text=", ".join(key_flags(candidate)),
     )
+
+
+def key_flags(candidate: ListingCandidate) -> tuple[str, ...]:
+    """Short, user-facing flags summarising the most important candidate signals."""
+
+    flags: list[str] = []
+    if candidate.is_favorite:
+        flags.append("Favorite")
+    if candidate.room_conflict:
+        flags.append("Room conflict")
+    if candidate.layout_confidence_label == LayoutConfidenceLabel.CONFIRMED:
+        flags.append("Layout confirmed")
+    if candidate.has_floor_plan:
+        flags.append("Floor plan")
+    if candidate.kitchen_living_detected:
+        flags.append("Kitchen-living")
+    if candidate.mortgage_risk_level in {
+        MortgageRiskLevel.HIGH,
+        MortgageRiskLevel.CRITICAL,
+    }:
+        flags.append("High mortgage risk")
+    if candidate.stove_heating_risk:
+        flags.append("Stove heating")
+    if candidate.wooden_building_risk:
+        flags.append("Wooden building")
+    return tuple(flags)
 
 
 def detail_view_model(detail: ListingDetailReadModel) -> DetailViewModel:
@@ -135,6 +166,21 @@ def _location_lines(detail: ListingDetailReadModel) -> tuple[str, ...]:
         f"Coordinates: {_coordinates_text(detail.latitude, detail.longitude)}",
         f"Location scores enabled: {_yes_no(detail.geo_scores_enabled)}",
         f"Disabled reason: {detail.geo_scores_disabled_reason or 'none'}",
+        "RTU: "
+        f"{_distance_text(detail.distance_to_rtu_m)}, "
+        f"score {_score_text(detail.rtu_score)}",
+        "Central station: "
+        f"{_distance_text(detail.distance_to_central_station_m)}, "
+        f"score {_score_text(detail.station_score)}",
+        "Grocery shops: "
+        f"nearest {_distance_text(detail.nearest_shop_distance_m)}, "
+        f"{_optional_count(detail.shops_within_1200m)} within 1200 m, "
+        f"score {_score_text(detail.shop_score)}",
+        "Public transport: "
+        f"nearest {_distance_text(detail.nearest_transport_stop_distance_m)}, "
+        f"{_optional_count(detail.transport_stops_nearby_count)} within 900 m, "
+        f"score {_score_text(detail.transport_score)}",
+        f"Location explanation: {detail.location_explanation or 'not calculated yet'}",
     )
 
 
@@ -169,6 +215,12 @@ def _price_text(price_eur: int | None) -> str:
     return f"{price_eur:,}".replace(",", " ") + " EUR"
 
 
+def _derive_price_per_m2(price_eur: int | None, area_m2: float | None) -> float | None:
+    if price_eur is None or area_m2 is None or area_m2 <= 0:
+        return None
+    return price_eur / area_m2
+
+
 def _price_per_m2_text(price_per_m2: float | None) -> str:
     if price_per_m2 is None:
         return "unknown"
@@ -194,6 +246,14 @@ def _coordinates_text(latitude: float | None, longitude: float | None) -> str:
     if latitude is None or longitude is None:
         return "unknown"
     return f"{latitude:.6f}, {longitude:.6f}"
+
+
+def _distance_text(distance_m: float | None) -> str:
+    return "unknown" if distance_m is None else f"{distance_m:.0f} m"
+
+
+def _optional_count(value: int | None) -> str:
+    return "unknown" if value is None else str(value)
 
 
 def _value_text(value: int | None) -> str:

@@ -1308,8 +1308,26 @@ The repository currently contains the first foundation and parser/storage layers
 25. CLI diagnostics for ranking, listing detail and map markers.
 26. Optional PySide6 desktop shell for ranking/detail inspection.
 27. Geocoding provider abstraction, Nominatim implementation and persistence service.
-28. Fixture-based parser, repository, image, AI, geo, scoring, filtering, ranking, map,
-    read-model and geocoding tests.
+28. Persistent AI analysis repository and `analyze-listings` command.
+29. Deterministic mock and JSON-file AI providers for local validation.
+30. Gemini model client with lazy optional dependency loading, JSON response mode and retries.
+31. Gemini two-pass provider with temporary image cleanup, image hash persistence and floor
+    plan caching.
+32. Strict validation that Pass 1 classifies every supplied image exactly once.
+33. Persistent RTU and central station distance recalculation.
+34. Persistent price-value and weighted score recalculation.
+35. `process-listings` orchestration command for pending analysis and score recalculation.
+36. UTF-8 console output for Latvian listing addresses on Windows.
+37. Fixture-based parser, repository, image, AI, geo, scoring, filtering, ranking, map,
+    read-model, geocoding and processing tests.
+38. Cached OSM/Overpass collection of grocery shops and transport stops with a POI
+    repository and a `refresh-infrastructure` command.
+39. Persistent shop and transport location score blocks fed from cached POIs.
+40. Embedded Leaflet map view with score-coloured markers, approximate/inactive/favorite
+    marker styles and a Python-to-JS selection bridge.
+41. Desktop UI with workflow status tabs (All / New / Favorites / Rejected / Inactive),
+    a filter panel, a richer ranking table with key flags, listing actions
+    (favorite, reject, mark viewed, open on SS.com) and a per-listing notes editor.
 
 ## Implementation Decisions Added During Build
 
@@ -1335,8 +1353,16 @@ The repository currently contains the first foundation and parser/storage layers
    do not import PySide6.
 10. Geocoding is provider-based. Tests use fake providers; live Nominatim calls are behind the
     `geocode-listings` CLI command.
+11. Gemini integration uses the official `google-genai` SDK behind the existing abstract model
+    client. Core modules and tests do not import the optional SDK.
+12. Real AI analysis downloads ordinary listing images only for the current run, persists
+    content hashes, caches detected floor plans and removes the temporary ordinary images.
+13. `process-listings` does not invoke geocoding implicitly. External address lookup remains
+    an explicit command.
+14. Mock analysis is deliberately labeled in its explanations and version. It validates
+    persistence and scoring flow but must not be treated as real apartment analysis.
 
 Next recommended implementation task:
 
-Add persistent AI-analysis execution/storage commands, then connect score recalculation to
-the existing score repository tables.
+Add preset and custom scoring profiles (Step 17) so the new UI profile selector can switch
+ranking strategies, then layer in notes-aware comparison and saved search sessions (Step 18).

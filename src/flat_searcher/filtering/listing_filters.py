@@ -57,6 +57,8 @@ class ListingFilters:
     hide_viewed: bool = False
     hide_rejected: bool = True
     favorites_only: bool = False
+    rejected_only: bool = False
+    inactive_only: bool = False
 
 
 def filter_candidates(
@@ -69,7 +71,11 @@ def filter_candidates(
 def _matches(candidate: ListingCandidate, filters: ListingFilters) -> bool:
     if filters.active_only and not filters.show_inactive and candidate.listing_status != "active":
         return False
+    if filters.inactive_only and candidate.listing_status == "active":
+        return False
     if filters.hide_rejected and candidate.is_rejected:
+        return False
+    if filters.rejected_only and not candidate.is_rejected:
         return False
     if filters.favorites_only and not candidate.is_favorite:
         return False
