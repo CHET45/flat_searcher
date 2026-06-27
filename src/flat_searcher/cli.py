@@ -4,9 +4,11 @@ from __future__ import annotations
 
 import argparse
 import json
+import sys
 from pathlib import Path
-from typing import Sequence
+from typing import Sequence, TextIO
 
+from flat_searcher.ai import AIAnalysisPipeline, GeminiModelClient, GeminiSetupError
 from flat_searcher.config import AppConfig
 from flat_searcher.db.bootstrap import init_database
 from flat_searcher.db.read_repository import ListingReadRepository
@@ -14,11 +16,24 @@ from flat_searcher.db.repository import open_database
 from flat_searcher.filtering import ListingFilters
 from flat_searcher.logging_config import configure_logging
 from flat_searcher.mapping import build_map_markers
+from flat_searcher.images import ImageDownloader
 from flat_searcher.presentation import detail_view_model, ranking_row_view_model
 from flat_searcher.ranking import rank_candidates
 from flat_searcher.scraper.http_client import HttpTextClient
 from flat_searcher.geo.geocoder import NominatimGeocoder
+from flat_searcher.geo.overpass import OverpassPOIProvider
+from flat_searcher.services.ai_analysis import (
+    AIAnalysisService,
+    AIAnalysisProvider,
+    JsonAIAnalysisProvider,
+    MockAIAnalysisProvider,
+)
 from flat_searcher.services.geocoding import GeocodingService
+from flat_searcher.services.gemini_analysis import GeminiAnalysisProvider
+from flat_searcher.services.infrastructure import InfrastructureRefreshService
+from flat_searcher.services.location_scoring import LocationScoreService
+from flat_searcher.services.processing import ListingProcessingService
+from flat_searcher.services.scoring import ScoreRecalculationService
 from flat_searcher.services.sync import ListingSyncService
 from flat_searcher.ui import DesktopUIConfig, UIDependencyError, run_desktop_app
 
@@ -65,7 +80,10 @@ def build_parser() -> argparse.ArgumentParser:
         help="Mark active listings missing from this run as inactive. Use only for full syncs.",
     )
 
-    ranking_parser = subparsers.add_parser("show-ranking", help="Print ranked listings from SQLite.")
+    ranking_parser = subparsers.add_parser(
+        "show-ranking",
+        help="Print ranked listings from SQLite.",
+    )
     ranking_parser.add_argument(
         "--database",
         type=Path,
@@ -94,7 +112,10 @@ def build_parser() -> argparse.ArgumentParser:
         help="Show only favorite listings.",
     )
 
-    detail_parser = subparsers.add_parser("show-detail", help="Print one listing detail view model.")
+    detail_parser = subparsers.add_parser(
+        "show-detail",
+        help="Print one listing detail view model.",
+    )
     detail_parser.add_argument(
         "listing_id",
         type=int,
@@ -139,19 +160,168 @@ def build_parser() -> argparse.ArgumentParser:
     )
     map_parser.add_argument("--limit", type=int, default=None, help="Maximum markers to print.")
 
-    geocode_parser = subparsers.add_parser("geocode-listings", help="Geocode listings missing coordinates.")
+    geocode_parser = subparsers.add_parser(
+        "geocode-listings",
+        help="Geocode listings missing coordinates.",
+    )
     geocode_parser.add_argument(
         "--database",
         type=Path,
         default=None,
         help="SQLite database path. Defaults to FLAT_SEARCHER_DB_PATH or app home.",
     )
-    geocode_parser.add_argument("--limit", type=int, default=None, help="Maximum listings to geocode.")
+    geocode_parser.add_argument(
+        "--limit",
+        type=int,
+        default=None,
+        help="Maximum listings to geocode.",
+    )
+
+    analyze_parser = subparsers.add_parser(
+        "analyze-listings",
+        help="Run AI analysis storage pipeline.",
+    )
+    analyze_parser.add_argument(
+        "--database",
+        type=Path,
+        default=None,
+        help="SQLite database path. Defaults to FLAT_SEARCHER_DB_PATH or app home.",
+    )
+    analyze_parser.add_argument(
+        "--listing-id",
+        type=int,
+        default=None,
+        help="Analyze one listing ID.",
+    )
+    analyze_parser.add_argument(
+        "--limit",
+        type=int,
+        default=None,
+        help="Maximum listings to analyze.",
+    )
+    analyze_parser.add_argument(
+        "--version",
+        default="mock-v1",
+        help="Analysis version label stored with the result.",
+    )
+    analyze_parser.add_argument(
+        "--force",
+        action="store_true",
+        help="Analyze selected listings even when a finished result already exists.",
+    )
+    _add_analysis_provider_arguments(analyze_parser)
+
+    location_score_parser = subparsers.add_parser(
+        "recalculate-location-scores",
+        help="Recalculate RTU and central station distance scores.",
+    )
+    location_score_parser.add_argument(
+        "--database",
+        type=Path,
+        default=None,
+        help="SQLite database path. Defaults to FLAT_SEARCHER_DB_PATH or app home.",
+    )
+
+    infrastructure_parser = subparsers.add_parser(
+        "refresh-infrastructure",
+        help="Refresh cached OSM grocery and public transport POIs.",
+    )
+    infrastructure_parser.add_argument(
+        "--database",
+        type=Path,
+        default=None,
+        help="SQLite database path. Defaults to FLAT_SEARCHER_DB_PATH or app home.",
+    )
+    infrastructure_parser.add_argument(
+        "--radius",
+        type=int,
+        default=1_800,
+        help="Overpass search radius in meters. Minimum: 1800.",
+    )
+    infrastructure_parser.add_argument(
+        "--max-age-hours",
+        type=float,
+        default=168,
+        help="Reuse cache entries newer than this age.",
+    )
+    infrastructure_parser.add_argument(
+        "--limit",
+        type=int,
+        default=None,
+        help="Maximum eligible listings to refresh.",
+    )
+    infrastructure_parser.add_argument(
+        "--force",
+        action="store_true",
+        help="Refresh even when a fresh cache entry exists.",
+    )
+    infrastructure_parser.add_argument(
+        "--profile",
+        default="for_living_mortgage",
+        help="Scoring profile recalculated after the refresh.",
+    )
+
+    score_parser = subparsers.add_parser(
+        "recalculate-scores",
+        help="Recalculate persisted apartment scores.",
+    )
+    score_parser.add_argument(
+        "--database",
+        type=Path,
+        default=None,
+        help="SQLite database path. Defaults to FLAT_SEARCHER_DB_PATH or app home.",
+    )
+    score_parser.add_argument(
+        "--profile",
+        default="for_living_mortgage",
+        help="Scoring profile key.",
+    )
+
+    process_parser = subparsers.add_parser(
+        "process-listings",
+        help="Run pending analysis, location scoring and overall scoring.",
+    )
+    process_parser.add_argument(
+        "--database",
+        type=Path,
+        default=None,
+        help="SQLite database path. Defaults to FLAT_SEARCHER_DB_PATH or app home.",
+    )
+    process_parser.add_argument(
+        "--listing-id",
+        type=int,
+        default=None,
+        help="Analyze one listing ID before recalculation.",
+    )
+    process_parser.add_argument(
+        "--limit",
+        type=int,
+        default=None,
+        help="Maximum pending listings to analyze.",
+    )
+    process_parser.add_argument(
+        "--version",
+        default="mock-v1",
+        help="Analysis version label stored with the result.",
+    )
+    process_parser.add_argument(
+        "--force-analysis",
+        action="store_true",
+        help="Analyze selected listings even when a finished result already exists.",
+    )
+    process_parser.add_argument(
+        "--profile",
+        default="for_living_mortgage",
+        help="Scoring profile key.",
+    )
+    _add_analysis_provider_arguments(process_parser)
 
     return parser
 
 
 def main(argv: Sequence[str] | None = None) -> int:
+    _configure_console_encoding(sys.stdout)
+    _configure_console_encoding(sys.stderr)
     configure_logging()
     parser = build_parser()
     args = parser.parse_args(argv)
@@ -254,6 +424,97 @@ def main(argv: Sequence[str] | None = None) -> int:
         print(f"Location scores enabled: {result.score_enabled_count}")
         return 0
 
+    if args.command == "analyze-listings":
+        init_database(config.database_path)
+        try:
+            provider = _build_analysis_provider(args, config)
+        except (GeminiSetupError, ValueError) as error:
+            print(str(error))
+            return 1
+        result = AIAnalysisService(config.database_path, provider).analyze_pending(
+            analysis_version=args.version,
+            listing_id=args.listing_id,
+            limit=args.limit,
+            force=args.force,
+        )
+        print(f"Checked listings: {result.checked_count}")
+        print(f"Analyzed listings: {result.analyzed_count}")
+        print(f"Failed listings: {result.failed_count}")
+        return 1 if result.failed_count else 0
+
+    if args.command == "recalculate-location-scores":
+        init_database(config.database_path)
+        result = LocationScoreService(config.database_path).recalculate()
+        print(f"Listings with geocoding: {result.listing_count}")
+        print(f"Calculated location scores: {result.calculated_count}")
+        print(f"Disabled location scores: {result.disabled_count}")
+        return 0
+
+    if args.command == "refresh-infrastructure":
+        init_database(config.database_path)
+        try:
+            refresh_result = InfrastructureRefreshService(
+                database_path=config.database_path,
+                provider=OverpassPOIProvider(config.overpass_endpoint),
+                source_endpoint=config.overpass_endpoint,
+            ).refresh(
+                radius_m=args.radius,
+                max_age_hours=args.max_age_hours,
+                limit=args.limit,
+                force=args.force,
+            )
+            location_result = LocationScoreService(config.database_path).recalculate()
+            scoring_result = ScoreRecalculationService(
+                config.database_path
+            ).recalculate(args.profile)
+        except ValueError as error:
+            print(str(error))
+            return 1
+        print(f"Eligible listings: {refresh_result.eligible_count}")
+        print(f"Refreshed listings: {refresh_result.refreshed_count}")
+        print(f"Fresh cache hits: {refresh_result.cached_count}")
+        print(f"Failed refreshes: {refresh_result.failed_count}")
+        print(f"Fetched POIs: {refresh_result.poi_count}")
+        print(f"Location scores calculated: {location_result.calculated_count}")
+        print(f"Overall scores calculated: {scoring_result.scored_count}")
+        return 1 if refresh_result.failed_count else 0
+
+    if args.command == "recalculate-scores":
+        init_database(config.database_path)
+        try:
+            result = ScoreRecalculationService(config.database_path).recalculate(args.profile)
+        except ValueError as error:
+            print(str(error))
+            return 1
+        print(f"Active listings: {result.listing_count}")
+        print(f"Scored listings: {result.scored_count}")
+        return 0
+
+    if args.command == "process-listings":
+        init_database(config.database_path)
+        try:
+            provider = _build_analysis_provider(args, config)
+            result = ListingProcessingService(
+                database_path=config.database_path,
+                analysis_provider=provider,
+            ).process(
+                analysis_version=args.version,
+                profile_key=args.profile,
+                listing_id=args.listing_id,
+                limit=args.limit,
+                force_analysis=args.force_analysis,
+            )
+        except (GeminiSetupError, ValueError) as error:
+            print(str(error))
+            return 1
+        print(f"AI checked: {result.ai.checked_count}")
+        print(f"AI analyzed: {result.ai.analyzed_count}")
+        print(f"AI failed: {result.ai.failed_count}")
+        print(f"Location scores calculated: {result.location.calculated_count}")
+        print(f"Location scores disabled: {result.location.disabled_count}")
+        print(f"Overall scores calculated: {result.scoring.scored_count}")
+        return 1 if result.ai.failed_count else 0
+
     parser.error(f"Unknown command: {args.command}")
     return 2
 
@@ -265,6 +526,85 @@ def _print_config(config: AppConfig) -> None:
     print(f"Temporary images dir: {config.temporary_images_dir}")
     print(f"Floor plans dir: {config.floor_plans_dir}")
     print(f"SS start URL: {config.ss_start_url}")
+    print(f"Gemini model: {config.gemini_model}")
+    print(f"Overpass endpoint: {config.overpass_endpoint}")
+
+
+def _configure_console_encoding(stream: TextIO) -> None:
+    reconfigure = getattr(stream, "reconfigure", None)
+    if callable(reconfigure):
+        reconfigure(encoding="utf-8", errors="replace")
+
+
+def _add_analysis_provider_arguments(parser: argparse.ArgumentParser) -> None:
+    parser.add_argument(
+        "--mock",
+        action="store_true",
+        help="Use deterministic mock analysis for local pipeline testing.",
+    )
+    parser.add_argument(
+        "--gemini",
+        action="store_true",
+        help="Use Gemini with GEMINI_API_KEY from the environment.",
+    )
+    parser.add_argument(
+        "--model",
+        default=None,
+        help="Gemini model override. Defaults to GEMINI_MODEL or the app default.",
+    )
+    parser.add_argument(
+        "--image-request-delay",
+        type=float,
+        default=0.1,
+        help="Delay between listing image downloads in seconds.",
+    )
+    parser.add_argument(
+        "--pass1-json",
+        type=Path,
+        default=None,
+        help="Pass 1 JSON file.",
+    )
+    parser.add_argument(
+        "--pass2-json",
+        type=Path,
+        default=None,
+        help="Pass 2 JSON file.",
+    )
+
+
+def _build_analysis_provider(args, config: AppConfig) -> AIAnalysisProvider:
+    selected_provider_count = sum(
+        (
+            bool(args.mock),
+            bool(args.gemini),
+            args.pass1_json is not None or args.pass2_json is not None,
+        )
+    )
+    if selected_provider_count != 1:
+        raise ValueError(
+            "Choose exactly one provider: --mock, --gemini, or both JSON files."
+        )
+    if args.mock:
+        return MockAIAnalysisProvider()
+    if args.gemini:
+        config.ensure_runtime_directories()
+        model_client = GeminiModelClient(
+            api_key=config.gemini_api_key or "",
+            model=args.model or config.gemini_model,
+        )
+        return GeminiAnalysisProvider(
+            pipeline=AIAnalysisPipeline(model_client),
+            image_downloader=ImageDownloader(
+                temporary_images_dir=config.temporary_images_dir,
+                floor_plans_dir=config.floor_plans_dir,
+                fetcher=HttpTextClient(
+                    request_delay_seconds=max(0.0, args.image_request_delay)
+                ),
+            ),
+        )
+    if args.pass1_json is None or args.pass2_json is None:
+        raise ValueError("Both --pass1-json and --pass2-json are required.")
+    return JsonAIAnalysisProvider(args.pass1_json, args.pass2_json)
 
 
 def _print_section(title: str, lines: tuple[str, ...]) -> None:

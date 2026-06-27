@@ -25,6 +25,7 @@ def build_pass1_prompt(images: tuple[ImagePromptInput, ...]) -> str:
                 "exterior_building, entrance_staircase, yard_or_street_view, "
                 "duplicate_or_near_duplicate, irrelevant_or_decorative, agency_collage"
             ),
+            "Attached images follow the same order as the Images list below.",
             "Return fields: images, floor_plan_image_ids, images_used_for_layout, "
             "images_used_for_building_type, ignored_images, duplicate_images, image_groups_by_room.",
             "Images:",

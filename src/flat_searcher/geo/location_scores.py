@@ -64,7 +64,17 @@ def shop_score(value: ShopScoreInput) -> float | None:
             (1_800, 0),
         ),
     )
-    count_bonus = min(value.shops_within_300m * 8 + value.shops_within_700m * 3, 20)
+    shops_300_to_700 = max(0, value.shops_within_700m - value.shops_within_300m)
+    shops_700_to_1200 = max(
+        0,
+        value.shops_within_1200m - value.shops_within_700m,
+    )
+    count_bonus = min(
+        value.shops_within_300m * 8
+        + shops_300_to_700 * 3
+        + shops_700_to_1200,
+        20,
+    )
     return min(100.0, distance_component + count_bonus)
 
 

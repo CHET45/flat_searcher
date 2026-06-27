@@ -17,6 +17,13 @@ from flat_searcher.geo.location_scores import (
     transport_score,
 )
 from flat_searcher.geo.geocoder import GeocodeProviderResult, Geocoder, NominatimGeocoder
+from flat_searcher.geo.overpass import (
+    NearbyPOI,
+    OverpassError,
+    OverpassPOIProvider,
+    POICategory,
+    POIProvider,
+)
 
 __all__ = [
     "AddressPrecision",
@@ -26,6 +33,11 @@ __all__ = [
     "GeocodeProviderResult",
     "Geocoder",
     "NominatimGeocoder",
+    "NearbyPOI",
+    "OverpassError",
+    "OverpassPOIProvider",
+    "POICategory",
+    "POIProvider",
     "ShopScoreInput",
     "TransportScoreInput",
     "central_station_distance_score",

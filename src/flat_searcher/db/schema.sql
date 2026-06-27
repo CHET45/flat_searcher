@@ -198,6 +198,42 @@ CREATE TABLE IF NOT EXISTS location_scores (
 CREATE UNIQUE INDEX IF NOT EXISTS idx_location_scores_listing
 ON location_scores (listing_id);
 
+CREATE TABLE IF NOT EXISTS osm_pois (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    osm_element_type TEXT NOT NULL,
+    osm_element_id INTEGER NOT NULL,
+    category TEXT NOT NULL,
+    name TEXT,
+    latitude REAL NOT NULL,
+    longitude REAL NOT NULL,
+    tags_json TEXT NOT NULL,
+    fetched_at TEXT NOT NULL,
+    source_endpoint TEXT NOT NULL,
+    UNIQUE(osm_element_type, osm_element_id, category)
+);
+
+CREATE INDEX IF NOT EXISTS idx_osm_pois_category
+ON osm_pois (category);
+
+CREATE TABLE IF NOT EXISTS osm_listing_pois (
+    listing_id INTEGER NOT NULL REFERENCES listings(id) ON DELETE CASCADE,
+    poi_id INTEGER NOT NULL REFERENCES osm_pois(id) ON DELETE CASCADE,
+    distance_m REAL NOT NULL,
+    PRIMARY KEY(listing_id, poi_id)
+);
+
+CREATE INDEX IF NOT EXISTS idx_osm_listing_pois_listing_distance
+ON osm_listing_pois (listing_id, distance_m);
+
+CREATE TABLE IF NOT EXISTS osm_poi_fetches (
+    listing_id INTEGER PRIMARY KEY REFERENCES listings(id) ON DELETE CASCADE,
+    latitude REAL NOT NULL,
+    longitude REAL NOT NULL,
+    radius_m INTEGER NOT NULL,
+    fetched_at TEXT NOT NULL,
+    source_endpoint TEXT NOT NULL
+);
+
 CREATE TABLE IF NOT EXISTS price_value_analyses (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
     listing_id INTEGER NOT NULL REFERENCES listings(id) ON DELETE CASCADE,

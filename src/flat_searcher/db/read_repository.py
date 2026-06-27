@@ -114,11 +114,25 @@ class ListingReadRepository:
                 g.geocode_confidence,
                 g.geo_scores_enabled,
                 g.geo_scores_disabled_reason,
+                ls.distance_to_rtu_m,
+                ls.rtu_score,
+                ls.distance_to_central_station_m,
+                ls.station_score,
+                ls.nearest_shop_distance_m,
+                ls.shops_within_300m,
+                ls.shops_within_700m,
+                ls.shops_within_1200m,
+                ls.shop_score,
+                ls.nearest_transport_stop_distance_m,
+                ls.transport_stops_nearby_count,
+                ls.transport_score,
+                ls.explanation AS location_explanation,
                 sr.overall_score
             FROM listings l
             LEFT JOIN user_listing_states u ON u.listing_id = l.id
             LEFT JOIN latest_ai_analyses a ON a.listing_id = l.id
             LEFT JOIN geocoding_results g ON g.listing_id = l.id
+            LEFT JOIN location_scores ls ON ls.listing_id = l.id
             LEFT JOIN score_results sr ON sr.listing_id = l.id AND sr.profile_key = ?
             WHERE l.id = ?
             """,
@@ -265,6 +279,21 @@ def _detail_from_row(
         geocode_confidence=parse_geocode_confidence(row["geocode_confidence"]),
         geo_scores_enabled=bool(row["geo_scores_enabled"]),
         geo_scores_disabled_reason=row["geo_scores_disabled_reason"],
+        distance_to_rtu_m=row["distance_to_rtu_m"],
+        rtu_score=row["rtu_score"],
+        distance_to_central_station_m=row["distance_to_central_station_m"],
+        station_score=row["station_score"],
+        nearest_shop_distance_m=row["nearest_shop_distance_m"],
+        shops_within_300m=row["shops_within_300m"],
+        shops_within_700m=row["shops_within_700m"],
+        shops_within_1200m=row["shops_within_1200m"],
+        shop_score=row["shop_score"],
+        nearest_transport_stop_distance_m=(
+            row["nearest_transport_stop_distance_m"]
+        ),
+        transport_stops_nearby_count=row["transport_stops_nearby_count"],
+        transport_score=row["transport_score"],
+        location_explanation=row["location_explanation"],
         overall_score=row["overall_score"],
         history_snapshots=history_snapshots,
         change_events=change_events,

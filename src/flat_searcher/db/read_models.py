@@ -73,6 +73,20 @@ class ListingDetailReadModel:
     geo_scores_enabled: bool
     geo_scores_disabled_reason: str | None
 
+    distance_to_rtu_m: float | None
+    rtu_score: float | None
+    distance_to_central_station_m: float | None
+    station_score: float | None
+    nearest_shop_distance_m: float | None
+    shops_within_300m: int | None
+    shops_within_700m: int | None
+    shops_within_1200m: int | None
+    shop_score: float | None
+    nearest_transport_stop_distance_m: float | None
+    transport_stops_nearby_count: int | None
+    transport_score: float | None
+    location_explanation: str | None
+
     overall_score: float | None
     history_snapshots: tuple[ListingHistorySnapshot, ...]
     change_events: tuple[ListingChangeEvent, ...]

@@ -1,5 +1,10 @@
 """AI analysis package."""
 
+from flat_searcher.ai.gemini_client import (
+    GeminiModelClient,
+    GeminiResponseError,
+    GeminiSetupError,
+)
 from flat_searcher.ai.pipeline import (
     AIAnalysisPipeline,
     AIModelClient,
@@ -22,6 +27,9 @@ __all__ = [
     "AIAnalysisPipeline",
     "AIModelClient",
     "ClassifiedImage",
+    "GeminiModelClient",
+    "GeminiResponseError",
+    "GeminiSetupError",
     "ImageCategory",
     "ImagePromptInput",
     "LayoutConfidenceLabel",
