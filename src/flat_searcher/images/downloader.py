@@ -19,8 +19,6 @@ class DownloadedImage:
     source_url: str
     temporary_path: Path
     content_hash: str
-    content_type: str | None
-    byte_count: int
 
 
 class ImageDownloader:
@@ -54,8 +52,6 @@ class ImageDownloader:
                     source_url=image_url,
                     temporary_path=path,
                     content_hash=content_hash,
-                    content_type=getattr(fetch_result, "content_type", None),
-                    byte_count=len(fetch_result.content),
                 )
             )
         return tuple(downloaded_images)

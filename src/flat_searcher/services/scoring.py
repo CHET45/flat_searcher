@@ -8,6 +8,7 @@ from pathlib import Path
 from statistics import median
 
 from flat_searcher.ai import MortgageRiskLevel
+from flat_searcher.db.profile_repository import ProfileRepository
 from flat_searcher.db.repository import open_database
 from flat_searcher.db.scoring_repository import ListingForScoring, ScoringRepository
 from flat_searcher.scoring import (
@@ -16,7 +17,6 @@ from flat_searcher.scoring import (
     ScoreBlockKey,
     calculate_price_value,
     calculate_weighted_score,
-    default_living_mortgage_profile,
     layout_confidence_score,
     mortgage_suitability_score,
     room_privacy_score,
@@ -34,14 +34,15 @@ class ScoreRecalculationService:
         self.database_path = database_path
 
     def recalculate(self, profile_key: str = "for_living_mortgage") -> ScoreRecalculationResult:
-        if profile_key != "for_living_mortgage":
-            raise ValueError(f"Unsupported profile: {profile_key}")
-        profile = default_living_mortgage_profile()
-
         with open_database(self.database_path) as connection:
+            profile_repository = ProfileRepository(connection)
+            profile_repository.sync_builtin_profiles()
+            profile = profile_repository.load_profile(profile_key)
+            if profile is None:
+                raise ValueError(f"Unknown scoring profile: {profile_key}")
+
             repository = ScoringRepository(connection)
             listings = repository.load_active_listings()
-            repository.save_profile(profile)
             market_listings = tuple(_market_listing(listing) for listing in listings)
             median_area = _median_area(listings)
             scored_count = 0
@@ -53,9 +54,7 @@ class ScoreRecalculationService:
                 )
                 blocks = _block_scores(listing, price_value.relative_market_score, median_area)
                 result = calculate_weighted_score(profile, blocks)
-                calculated_at = _now()
-                repository.save_price_value(listing, price_value, calculated_at)
-                repository.save_score_result(listing.listing_id, result, calculated_at)
+                repository.save_score_result(listing.listing_id, result, _now())
                 if result.overall_score is not None:
                     scored_count += 1
 

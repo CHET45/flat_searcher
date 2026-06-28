@@ -50,6 +50,7 @@ class GeminiAnalysisProvider:
                 ss_fields=_ss_fields(listing),
                 pass1_output=parse_ai_json_object(pass1.raw_json),
                 image_paths=image_paths,
+                layout_priors=listing.layout_priors,
             )
             _validate_floor_plan_references(
                 listing.image_ids,

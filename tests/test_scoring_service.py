@@ -11,7 +11,7 @@ from flat_searcher.services.scoring import ScoreRecalculationService
 
 
 class ScoreRecalculationServiceTests(TestCase):
-    def test_recalculate_persists_profile_price_value_and_overall_scores(self) -> None:
+    def test_recalculate_persists_profile_and_overall_scores(self) -> None:
         with tempfile.TemporaryDirectory() as temp_dir:
             database_path = Path(temp_dir) / "flat_searcher.sqlite3"
             init_database(database_path)
@@ -37,9 +37,6 @@ class ScoreRecalculationServiceTests(TestCase):
                     WHERE profile_key = 'for_living_mortgage'
                     """
                 ).fetchone()
-                price_rows = connection.execute(
-                    "SELECT * FROM price_value_analyses ORDER BY listing_id"
-                ).fetchall()
                 score_rows = connection.execute(
                     "SELECT * FROM score_results ORDER BY listing_id"
                 ).fetchall()
@@ -56,9 +53,7 @@ class ScoreRecalculationServiceTests(TestCase):
                 json.loads(profile["block_weights_json"])["price_value"],
                 "Critical factor",
             )
-            self.assertEqual(len(price_rows), 3)
             self.assertEqual(len(score_rows), 3)
-            self.assertTrue(all(row["price_value_score"] is not None for row in price_rows))
             self.assertTrue(all(row["overall_score"] is not None for row in score_rows))
             first_candidate = next(
                 candidate for candidate in candidates if candidate.listing_id == first_id

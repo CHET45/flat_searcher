@@ -51,7 +51,6 @@ def filters_for_tab(tab: WorkflowTab, base: ListingFilters) -> ListingFilters:
             inactive_only=False,
         )
     if tab is WorkflowTab.FAVORITES:
-        # Favorites stay accessible even when rejected or inactive.
         return dataclasses.replace(
             base,
             favorites_only=True,

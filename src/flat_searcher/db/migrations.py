@@ -1,11 +1,22 @@
-"""Idempotent SQLite schema migrations."""
+"""Idempotent SQLite schema migrations.
+
+`schema.sql` recreates every table, index and view with `IF NOT EXISTS` on each
+init, so migrations only handle changes that statement cannot express: adding
+columns to an existing table and dropping objects that were removed from the
+schema.
+"""
 
 from __future__ import annotations
 
 import sqlite3
 
 
-SCHEMA_VERSION = "003"
+SCHEMA_VERSION = "005"
+
+_REMOVED_COLUMNS = {
+    "scoring_profiles": ("block_settings_json",),
+    "score_results": ("tie_breaker_explanation",),
+}
 
 
 def apply_migrations(connection: sqlite3.Connection) -> None:
@@ -20,8 +31,9 @@ def apply_migrations(connection: sqlite3.Connection) -> None:
             "detail_fields_json": "TEXT",
         },
     )
-    _ensure_latest_ai_view(connection)
-    _ensure_osm_poi_tables(connection)
+    connection.execute("DROP TABLE IF EXISTS price_value_analyses")
+    for table_name, columns in _REMOVED_COLUMNS.items():
+        _drop_columns(connection, table_name, columns)
 
 
 def _ensure_columns(
@@ -29,9 +41,7 @@ def _ensure_columns(
     table_name: str,
     columns: dict[str, str],
 ) -> None:
-    existing_columns = {
-        row[1] for row in connection.execute(f"PRAGMA table_info({table_name})").fetchall()
-    }
+    existing_columns = _column_names(connection, table_name)
     for column_name, column_definition in columns.items():
         if column_name not in existing_columns:
             connection.execute(
@@ -39,59 +49,16 @@ def _ensure_columns(
             )
 
 
-def _ensure_latest_ai_view(connection: sqlite3.Connection) -> None:
-    connection.execute(
-        """
-        CREATE VIEW IF NOT EXISTS latest_ai_analyses AS
-        SELECT ai.*
-        FROM ai_analyses ai
-        JOIN (
-            SELECT listing_id, MAX(id) AS latest_id
-            FROM ai_analyses
-            WHERE status = 'finished'
-            GROUP BY listing_id
-        ) latest ON latest.latest_id = ai.id
-        """
-    )
+def _drop_columns(
+    connection: sqlite3.Connection,
+    table_name: str,
+    columns: tuple[str, ...],
+) -> None:
+    existing_columns = _column_names(connection, table_name)
+    for column_name in columns:
+        if column_name in existing_columns:
+            connection.execute(f"ALTER TABLE {table_name} DROP COLUMN {column_name}")
 
 
-def _ensure_osm_poi_tables(connection: sqlite3.Connection) -> None:
-    connection.executescript(
-        """
-        CREATE TABLE IF NOT EXISTS osm_pois (
-            id INTEGER PRIMARY KEY AUTOINCREMENT,
-            osm_element_type TEXT NOT NULL,
-            osm_element_id INTEGER NOT NULL,
-            category TEXT NOT NULL,
-            name TEXT,
-            latitude REAL NOT NULL,
-            longitude REAL NOT NULL,
-            tags_json TEXT NOT NULL,
-            fetched_at TEXT NOT NULL,
-            source_endpoint TEXT NOT NULL,
-            UNIQUE(osm_element_type, osm_element_id, category)
-        );
-
-        CREATE INDEX IF NOT EXISTS idx_osm_pois_category
-        ON osm_pois (category);
-
-        CREATE TABLE IF NOT EXISTS osm_listing_pois (
-            listing_id INTEGER NOT NULL REFERENCES listings(id) ON DELETE CASCADE,
-            poi_id INTEGER NOT NULL REFERENCES osm_pois(id) ON DELETE CASCADE,
-            distance_m REAL NOT NULL,
-            PRIMARY KEY(listing_id, poi_id)
-        );
-
-        CREATE INDEX IF NOT EXISTS idx_osm_listing_pois_listing_distance
-        ON osm_listing_pois (listing_id, distance_m);
-
-        CREATE TABLE IF NOT EXISTS osm_poi_fetches (
-            listing_id INTEGER PRIMARY KEY REFERENCES listings(id) ON DELETE CASCADE,
-            latitude REAL NOT NULL,
-            longitude REAL NOT NULL,
-            radius_m INTEGER NOT NULL,
-            fetched_at TEXT NOT NULL,
-            source_endpoint TEXT NOT NULL
-        );
-        """
-    )
+def _column_names(connection: sqlite3.Connection, table_name: str) -> set[str]:
+    return {row[1] for row in connection.execute(f"PRAGMA table_info({table_name})").fetchall()}

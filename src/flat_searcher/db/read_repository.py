@@ -37,6 +37,10 @@ class ListingReadRepository:
                 COALESCE(u.is_favorite, 0) AS is_favorite,
                 COALESCE(u.is_rejected, 0) AS is_rejected,
                 COALESCE(u.is_viewed, 0) AS is_viewed,
+                CASE
+                    WHEN u.user_notes IS NOT NULL AND TRIM(u.user_notes) != '' THEN 1
+                    ELSE 0
+                END AS has_notes,
                 a.effective_private_rooms,
                 a.ss_vs_ai_room_conflict,
                 a.kitchen_living_detected,
@@ -215,6 +219,7 @@ def _candidate_from_row(row: sqlite3.Row) -> ListingCandidate:
         stove_heating_risk=bool(row["stove_heating_risk"]),
         wooden_building_risk=bool(row["wooden_building_risk"]),
         has_floor_plan=bool(row["has_floor_plan"]),
+        has_notes=bool(row["has_notes"]),
         rtu_score=row["rtu_score"],
         transport_score=row["transport_score"],
         station_score=row["station_score"],

@@ -10,20 +10,26 @@ Detailed implementation planning lives in:
 
 ## Current status
 
-The core local processing path is operational:
+The full MVP roadmap (steps 01-20) is implemented:
 
 - SS.com list/detail parsing, synchronization, snapshots and change events.
 - SQLite persistence for listings, images, AI analyses, geocoding and scores.
 - Two-pass AI contracts with mock, JSON-file and Gemini providers.
 - Temporary image cleanup and persistent floor plan caching.
 - Exact-address geocoding eligibility and destination distance scores.
+- Cached OSM shop/transport POIs feeding location scores.
 - Price-value analysis, weighted scoring, filtering and ranking.
 - Persistent read models for ranking, detail and map surfaces.
-- Optional PySide6 ranking/detail desktop shell.
+- Embedded Leaflet map with score-coloured markers.
+- Desktop UI with workflow tabs, filters, listing actions and notes.
+- Nine built-in scoring profiles plus a custom-profile editor.
+- Side-by-side comparison of 2-5 apartments and saved search sessions.
+- A local typical-layout prior database fed into Gemini Pass 2 as hypotheses.
+- SQLite backup/export command.
 - End-to-end `process-listings` command.
 
-Shop and public transport POI collection, the embedded Leaflet map and the complete desktop
-workflow are still pending.
+Windows packaging is documented in [PACKAGING.md](PACKAGING.md) and is the main
+remaining step before distribution.
 
 ## Installation
 
@@ -38,7 +44,7 @@ python -m pip install -e ".[dev]"
 Install optional integrations as needed:
 
 ```powershell
-python -m pip install -e ".[ai,geo,ui]"
+python -m pip install -e ".[ai,ui]"
 ```
 
 ## Local commands
@@ -58,7 +64,17 @@ python -m flat_searcher process-listings --database .\data\flat_searcher.sqlite3
 python -m flat_searcher show-ranking --database .\data\flat_searcher.sqlite3 --limit 10
 python -m flat_searcher show-detail 1 --database .\data\flat_searcher.sqlite3
 python -m flat_searcher show-map-markers --database .\data\flat_searcher.sqlite3
+python -m flat_searcher list-profiles --database .\data\flat_searcher.sqlite3
+python -m flat_searcher recalculate-scores --all-profiles --database .\data\flat_searcher.sqlite3
+python -m flat_searcher seed-layout-priors --database .\data\flat_searcher.sqlite3
+python -m flat_searcher backup-db --database .\data\flat_searcher.sqlite3
 ```
+
+Scoring profiles let you switch search strategy. There are nine built-in profiles
+(for example `for_living_mortgage`, `mortgage_first`, `best_price`, `closer_to_rtu`).
+Pass `--profile <key>` to ranking, detail, map and score commands, or build custom
+profiles in the desktop UI. Use `--all-profiles` to precalculate scores for every
+profile so the UI can switch instantly.
 
 `--mock` validates the local pipeline but does not perform real apartment reasoning. To use
 Gemini, set the API key and install the AI extra:

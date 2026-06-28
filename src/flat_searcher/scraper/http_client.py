@@ -21,7 +21,6 @@ class FetchResult:
 class BinaryFetchResult:
     url: str
     content: bytes
-    content_type: str | None = None
 
 
 class FetchError(RuntimeError):
@@ -61,7 +60,6 @@ class HttpTextClient:
                 return BinaryFetchResult(
                     url=response.geturl(),
                     content=response.read(),
-                    content_type=response.headers.get_content_type(),
                 )
         except (HTTPError, URLError, TimeoutError) as error:
             raise FetchError(f"Failed to fetch {url}: {error}") from error

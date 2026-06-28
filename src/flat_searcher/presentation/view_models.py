@@ -66,6 +66,8 @@ def key_flags(candidate: ListingCandidate) -> tuple[str, ...]:
     flags: list[str] = []
     if candidate.is_favorite:
         flags.append("Favorite")
+    if candidate.has_notes:
+        flags.append("Note")
     if candidate.room_conflict:
         flags.append("Room conflict")
     if candidate.layout_confidence_label == LayoutConfidenceLabel.CONFIRMED:

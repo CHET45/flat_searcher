@@ -234,25 +234,6 @@ CREATE TABLE IF NOT EXISTS osm_poi_fetches (
     source_endpoint TEXT NOT NULL
 );
 
-CREATE TABLE IF NOT EXISTS price_value_analyses (
-    id INTEGER PRIMARY KEY AUTOINCREMENT,
-    listing_id INTEGER NOT NULL REFERENCES listings(id) ON DELETE CASCADE,
-    price_per_effective_private_room REAL,
-    price_value_score REAL,
-    price_per_m2_score REAL,
-    relative_market_score REAL,
-    absolute_price_score REAL,
-    suspicious_low_price_flag INTEGER NOT NULL DEFAULT 0,
-    market_baseline_level_used TEXT,
-    market_baseline_sample_size INTEGER,
-    market_baseline_median_price_per_m2 REAL,
-    market_baseline_explanation TEXT,
-    calculated_at TEXT NOT NULL
-);
-
-CREATE UNIQUE INDEX IF NOT EXISTS idx_price_value_listing
-ON price_value_analyses (listing_id);
-
 CREATE TABLE IF NOT EXISTS scoring_profiles (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
     profile_key TEXT NOT NULL UNIQUE,
@@ -260,7 +241,6 @@ CREATE TABLE IF NOT EXISTS scoring_profiles (
     base_profile_key TEXT,
     enabled_blocks_json TEXT NOT NULL,
     block_weights_json TEXT NOT NULL,
-    block_settings_json TEXT,
     is_builtin INTEGER NOT NULL DEFAULT 0,
     created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
     updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
@@ -273,7 +253,6 @@ CREATE TABLE IF NOT EXISTS score_results (
     overall_score REAL,
     score_breakdown_json TEXT NOT NULL,
     score_explanation TEXT,
-    tie_breaker_explanation TEXT,
     calculated_at TEXT NOT NULL,
     UNIQUE(listing_id, profile_key)
 );
@@ -303,3 +282,27 @@ CREATE TABLE IF NOT EXISTS search_sessions (
     created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
     updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
 );
+
+CREATE TABLE IF NOT EXISTS layout_priors (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    series_name TEXT,
+    building_type TEXT,
+    construction_period TEXT,
+    typical_area_min REAL,
+    typical_area_max REAL,
+    typical_room_count INTEGER,
+    typical_layout_variants TEXT,
+    walkthrough_probability REAL,
+    isolated_rooms_probability REAL,
+    source_note TEXT,
+    confidence TEXT NOT NULL DEFAULT 'medium',
+    verified INTEGER NOT NULL DEFAULT 0,
+    created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    UNIQUE(series_name, building_type, typical_room_count)
+);
+
+CREATE INDEX IF NOT EXISTS idx_layout_priors_series
+ON layout_priors (series_name);
+
+CREATE INDEX IF NOT EXISTS idx_layout_priors_building_type
+ON layout_priors (building_type);

@@ -1328,6 +1328,19 @@ The repository currently contains the first foundation and parser/storage layers
 41. Desktop UI with workflow status tabs (All / New / Favorites / Rejected / Inactive),
     a filter panel, a richer ranking table with key flags, listing actions
     (favorite, reject, mark viewed, open on SS.com) and a per-listing notes editor.
+42. Nine built-in scoring profiles, a profile repository for built-in and custom
+    profiles, a `list-profiles` command and `recalculate-scores --all-profiles`.
+43. Desktop profile selector and importance-only profile editor with save/delete,
+    recalculating ranking and map colours when the profile changes.
+44. Note indicators in ranking rows, a side-by-side comparison view for 2-5
+    apartments and a comparison tab/basket in the desktop UI.
+45. Saved search sessions with JSON filter serialization, restoring profile and
+    filters from the desktop session controls.
+46. A local typical-layout prior database with bundled Riga series, relevance
+    lookup, auto-seeding on database init and injection into the Gemini Pass 2
+    prompt as non-authoritative hypotheses.
+47. Consistent SQLite backup/export via the online backup API and a `backup-db`
+    command, UI smoke tests and a Windows packaging strategy in `PACKAGING.md`.
 
 ## Implementation Decisions Added During Build
 
@@ -1362,7 +1375,10 @@ The repository currently contains the first foundation and parser/storage layers
 14. Mock analysis is deliberately labeled in its explanations and version. It validates
     persistence and scoring flow but must not be treated as real apartment analysis.
 
-Next recommended implementation task:
+Implementation status:
 
-Add preset and custom scoring profiles (Step 17) so the new UI profile selector can switch
-ranking strategies, then layer in notes-aware comparison and saved search sessions (Step 18).
+Steps 01-20 of this roadmap are implemented. The remaining work is Windows
+packaging and distribution, captured as a strategy in `PACKAGING.md`, plus
+ongoing reliability hardening (parser resilience to SS.com HTML changes, real
+Gemini analysis tuning and curating verified layout priors beyond the bundled
+starter set).

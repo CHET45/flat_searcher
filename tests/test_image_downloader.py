@@ -10,12 +10,11 @@ from flat_searcher.images import ImageDownloader
 class FakeBinaryResult:
     url: str
     content: bytes
-    content_type: str
 
 
 class FakeBinaryFetcher:
     def fetch_bytes(self, url: str) -> FakeBinaryResult:
-        return FakeBinaryResult(url=url, content=f"image:{url}".encode(), content_type="image/jpeg")
+        return FakeBinaryResult(url=url, content=f"image:{url}".encode())
 
 
 class ImageDownloaderTests(TestCase):
@@ -37,7 +36,6 @@ class ImageDownloaderTests(TestCase):
             self.assertEqual(len(downloaded), 2)
             self.assertTrue(downloaded[0].temporary_path.exists())
             self.assertTrue(downloaded[1].temporary_path.exists())
-            self.assertEqual(downloaded[0].content_type, "image/jpeg")
 
             cached_floor_plan = downloader.cache_floor_plan(10, downloaded[0])
             self.assertTrue(cached_floor_plan.exists())

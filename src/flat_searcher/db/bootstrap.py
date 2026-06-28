@@ -6,6 +6,7 @@ import sqlite3
 from dataclasses import dataclass
 from pathlib import Path
 
+from flat_searcher.db.layout_prior_repository import LayoutPriorRepository
 from flat_searcher.db.migrations import SCHEMA_VERSION, apply_migrations
 
 
@@ -29,6 +30,7 @@ def init_database(database_path: Path) -> DatabaseInitResult:
         connection.execute("PRAGMA foreign_keys = ON")
         connection.executescript(schema_sql)
         apply_migrations(connection)
+        LayoutPriorRepository(connection).seed_default_priors()
         connection.execute(
             "INSERT OR REPLACE INTO schema_meta (key, value) VALUES (?, ?)",
             ("schema_version", SCHEMA_VERSION),

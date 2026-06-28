@@ -11,6 +11,8 @@ from typing import Sequence, TextIO
 from flat_searcher.ai import AIAnalysisPipeline, GeminiModelClient, GeminiSetupError
 from flat_searcher.config import AppConfig
 from flat_searcher.db.bootstrap import init_database
+from flat_searcher.db.layout_prior_repository import LayoutPriorRepository
+from flat_searcher.db.profile_repository import ProfileRepository
 from flat_searcher.db.read_repository import ListingReadRepository
 from flat_searcher.db.repository import open_database
 from flat_searcher.filtering import ListingFilters
@@ -28,6 +30,7 @@ from flat_searcher.services.ai_analysis import (
     JsonAIAnalysisProvider,
     MockAIAnalysisProvider,
 )
+from flat_searcher.services.backup import backup_database
 from flat_searcher.services.geocoding import GeocodingService
 from flat_searcher.services.gemini_analysis import GeminiAnalysisProvider
 from flat_searcher.services.infrastructure import InfrastructureRefreshService
@@ -48,20 +51,10 @@ def build_parser() -> argparse.ArgumentParser:
     subparsers.add_parser("show-config", help="Print resolved runtime paths and defaults.")
 
     init_db_parser = subparsers.add_parser("init-db", help="Create or update the SQLite database.")
-    init_db_parser.add_argument(
-        "--database",
-        type=Path,
-        default=None,
-        help="SQLite database path. Defaults to FLAT_SEARCHER_DB_PATH or app home.",
-    )
+    _add_database_argument(init_db_parser)
 
     sync_parser = subparsers.add_parser("sync-listings", help="Fetch SS.com listings into SQLite.")
-    sync_parser.add_argument(
-        "--database",
-        type=Path,
-        default=None,
-        help="SQLite database path. Defaults to FLAT_SEARCHER_DB_PATH or app home.",
-    )
+    _add_database_argument(sync_parser)
     sync_parser.add_argument(
         "--limit",
         type=int,
@@ -84,12 +77,7 @@ def build_parser() -> argparse.ArgumentParser:
         "show-ranking",
         help="Print ranked listings from SQLite.",
     )
-    ranking_parser.add_argument(
-        "--database",
-        type=Path,
-        default=None,
-        help="SQLite database path. Defaults to FLAT_SEARCHER_DB_PATH or app home.",
-    )
+    _add_database_argument(ranking_parser)
     ranking_parser.add_argument(
         "--profile",
         default="for_living_mortgage",
@@ -121,12 +109,7 @@ def build_parser() -> argparse.ArgumentParser:
         type=int,
         help="Internal listing database ID.",
     )
-    detail_parser.add_argument(
-        "--database",
-        type=Path,
-        default=None,
-        help="SQLite database path. Defaults to FLAT_SEARCHER_DB_PATH or app home.",
-    )
+    _add_database_argument(detail_parser)
     detail_parser.add_argument(
         "--profile",
         default="for_living_mortgage",
@@ -134,12 +117,7 @@ def build_parser() -> argparse.ArgumentParser:
     )
 
     ui_parser = subparsers.add_parser("run-ui", help="Start the desktop UI.")
-    ui_parser.add_argument(
-        "--database",
-        type=Path,
-        default=None,
-        help="SQLite database path. Defaults to FLAT_SEARCHER_DB_PATH or app home.",
-    )
+    _add_database_argument(ui_parser)
     ui_parser.add_argument(
         "--profile",
         default="for_living_mortgage",
@@ -147,12 +125,7 @@ def build_parser() -> argparse.ArgumentParser:
     )
 
     map_parser = subparsers.add_parser("show-map-markers", help="Print map marker JSON.")
-    map_parser.add_argument(
-        "--database",
-        type=Path,
-        default=None,
-        help="SQLite database path. Defaults to FLAT_SEARCHER_DB_PATH or app home.",
-    )
+    _add_database_argument(map_parser)
     map_parser.add_argument(
         "--profile",
         default="for_living_mortgage",
@@ -164,12 +137,7 @@ def build_parser() -> argparse.ArgumentParser:
         "geocode-listings",
         help="Geocode listings missing coordinates.",
     )
-    geocode_parser.add_argument(
-        "--database",
-        type=Path,
-        default=None,
-        help="SQLite database path. Defaults to FLAT_SEARCHER_DB_PATH or app home.",
-    )
+    _add_database_argument(geocode_parser)
     geocode_parser.add_argument(
         "--limit",
         type=int,
@@ -181,12 +149,7 @@ def build_parser() -> argparse.ArgumentParser:
         "analyze-listings",
         help="Run AI analysis storage pipeline.",
     )
-    analyze_parser.add_argument(
-        "--database",
-        type=Path,
-        default=None,
-        help="SQLite database path. Defaults to FLAT_SEARCHER_DB_PATH or app home.",
-    )
+    _add_database_argument(analyze_parser)
     analyze_parser.add_argument(
         "--listing-id",
         type=int,
@@ -215,23 +178,13 @@ def build_parser() -> argparse.ArgumentParser:
         "recalculate-location-scores",
         help="Recalculate RTU and central station distance scores.",
     )
-    location_score_parser.add_argument(
-        "--database",
-        type=Path,
-        default=None,
-        help="SQLite database path. Defaults to FLAT_SEARCHER_DB_PATH or app home.",
-    )
+    _add_database_argument(location_score_parser)
 
     infrastructure_parser = subparsers.add_parser(
         "refresh-infrastructure",
         help="Refresh cached OSM grocery and public transport POIs.",
     )
-    infrastructure_parser.add_argument(
-        "--database",
-        type=Path,
-        default=None,
-        help="SQLite database path. Defaults to FLAT_SEARCHER_DB_PATH or app home.",
-    )
+    _add_database_argument(infrastructure_parser)
     infrastructure_parser.add_argument(
         "--radius",
         type=int,
@@ -261,32 +214,51 @@ def build_parser() -> argparse.ArgumentParser:
         help="Scoring profile recalculated after the refresh.",
     )
 
+    profiles_parser = subparsers.add_parser(
+        "list-profiles",
+        help="List available scoring profiles.",
+    )
+    _add_database_argument(profiles_parser)
+
+    priors_parser = subparsers.add_parser(
+        "seed-layout-priors",
+        help="Seed the bundled typical-layout priors when the table is empty.",
+    )
+    _add_database_argument(priors_parser)
+
+    backup_parser = subparsers.add_parser(
+        "backup-db",
+        help="Write a consistent backup copy of the SQLite database.",
+    )
+    _add_database_argument(backup_parser)
+    backup_parser.add_argument(
+        "--output",
+        type=Path,
+        default=None,
+        help="Backup file or directory. Defaults to a timestamped file next to the database.",
+    )
+
     score_parser = subparsers.add_parser(
         "recalculate-scores",
         help="Recalculate persisted apartment scores.",
     )
-    score_parser.add_argument(
-        "--database",
-        type=Path,
-        default=None,
-        help="SQLite database path. Defaults to FLAT_SEARCHER_DB_PATH or app home.",
-    )
+    _add_database_argument(score_parser)
     score_parser.add_argument(
         "--profile",
         default="for_living_mortgage",
         help="Scoring profile key.",
+    )
+    score_parser.add_argument(
+        "--all-profiles",
+        action="store_true",
+        help="Recalculate scores for every available profile.",
     )
 
     process_parser = subparsers.add_parser(
         "process-listings",
         help="Run pending analysis, location scoring and overall scoring.",
     )
-    process_parser.add_argument(
-        "--database",
-        type=Path,
-        default=None,
-        help="SQLite database path. Defaults to FLAT_SEARCHER_DB_PATH or app home.",
-    )
+    _add_database_argument(process_parser)
     process_parser.add_argument(
         "--listing-id",
         type=int,
@@ -479,10 +451,54 @@ def main(argv: Sequence[str] | None = None) -> int:
         print(f"Overall scores calculated: {scoring_result.scored_count}")
         return 1 if refresh_result.failed_count else 0
 
+    if args.command == "list-profiles":
+        init_database(config.database_path)
+        with open_database(config.database_path) as connection:
+            repository = ProfileRepository(connection)
+            repository.sync_builtin_profiles()
+            summaries = repository.list_profiles()
+        for summary in summaries:
+            kind = "built-in" if summary.is_builtin else "custom"
+            print(f"{summary.profile_key} - {summary.profile_name} ({kind})")
+        return 0
+
+    if args.command == "seed-layout-priors":
+        init_database(config.database_path)
+        with open_database(config.database_path) as connection:
+            repository = LayoutPriorRepository(connection)
+            seeded = repository.seed_default_priors()
+            total = repository.count()
+        print(f"Seeded priors: {seeded}")
+        print(f"Total priors: {total}")
+        return 0
+
+    if args.command == "backup-db":
+        try:
+            result = backup_database(config.database_path, args.output)
+        except FileNotFoundError as error:
+            print(str(error))
+            return 1
+        print(f"Backed up: {result.source_path}")
+        print(f"Backup file: {result.backup_path}")
+        print(f"Backup size: {result.size_bytes} bytes")
+        return 0
+
     if args.command == "recalculate-scores":
         init_database(config.database_path)
+        service = ScoreRecalculationService(config.database_path)
         try:
-            result = ScoreRecalculationService(config.database_path).recalculate(args.profile)
+            if args.all_profiles:
+                with open_database(config.database_path) as connection:
+                    profile_repository = ProfileRepository(connection)
+                    profile_repository.sync_builtin_profiles()
+                    profile_keys = [
+                        summary.profile_key for summary in profile_repository.list_profiles()
+                    ]
+                for profile_key in profile_keys:
+                    result = service.recalculate(profile_key)
+                    print(f"{profile_key}: scored {result.scored_count}/{result.listing_count}")
+                return 0
+            result = service.recalculate(args.profile)
         except ValueError as error:
             print(str(error))
             return 1
@@ -534,6 +550,15 @@ def _configure_console_encoding(stream: TextIO) -> None:
     reconfigure = getattr(stream, "reconfigure", None)
     if callable(reconfigure):
         reconfigure(encoding="utf-8", errors="replace")
+
+
+def _add_database_argument(parser: argparse.ArgumentParser) -> None:
+    parser.add_argument(
+        "--database",
+        type=Path,
+        default=None,
+        help="SQLite database path. Defaults to FLAT_SEARCHER_DB_PATH or app home.",
+    )
 
 
 def _add_analysis_provider_arguments(parser: argparse.ArgumentParser) -> None:

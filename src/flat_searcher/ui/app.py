@@ -8,20 +8,34 @@ from datetime import datetime, timezone
 from pathlib import Path
 
 from flat_searcher.db.bootstrap import init_database
+from flat_searcher.db.profile_repository import ProfileRepository
 from flat_searcher.db.read_repository import ListingReadRepository
 from flat_searcher.db.repository import open_database
+from flat_searcher.db.session_repository import SearchSessionRepository
 from flat_searcher.db.user_state_repository import UserStateRepository
 from flat_searcher.filtering import ListingFilters
 from flat_searcher.mapping import build_map_markers
 from flat_searcher.presentation import (
+    MAX_COMPARISON,
+    MIN_COMPARISON,
     WORKFLOW_TAB_LABELS,
     DetailViewModel,
     WorkflowTab,
+    build_comparison_view,
     detail_view_model,
     filters_for_tab,
     ranking_row_view_model,
 )
 from flat_searcher.ranking import rank_candidates
+from flat_searcher.scoring import (
+    BLOCK_LABELS,
+    ImportanceLevel,
+    ScoreBlockKey,
+    ScoringProfile,
+    custom_profile,
+    slugify_profile_name,
+)
+from flat_searcher.services.scoring import ScoreRecalculationService
 from flat_searcher.ui.map_html import build_leaflet_html
 
 
@@ -70,14 +84,18 @@ def _create_main_window(config: DesktopUIConfig):
     from PySide6.QtWidgets import (
         QCheckBox,
         QComboBox,
+        QDialog,
+        QDialogButtonBox,
         QFormLayout,
         QGroupBox,
         QHBoxLayout,
+        QInputDialog,
         QLabel,
         QMainWindow,
         QMessageBox,
         QPlainTextEdit,
         QPushButton,
+        QScrollArea,
         QSpinBox,
         QSplitter,
         QTableWidget,
@@ -97,6 +115,54 @@ def _create_main_window(config: DesktopUIConfig):
         def markerSelected(self, listing_id: int) -> None:
             self.window.select_listing(listing_id)
 
+    class ProfileEditorDialog(QDialog):
+        """Importance-only profile editor.
+
+        The user can only change how important each block is. Scoring direction
+        stays owned by the application, and views are never offered as a block.
+        """
+
+        def __init__(self, parent, profile: ScoringProfile) -> None:
+            super().__init__(parent)
+            self.setWindowTitle(f"Edit profile: {profile.name}")
+            self.resize(440, 560)
+            self._combos: dict[ScoreBlockKey, QComboBox] = {}
+
+            layout = QVBoxLayout(self)
+            self.name_edit = QLabel(
+                "Set the importance of each scoring block. "
+                "Save as a new profile to keep your changes."
+            )
+            self.name_edit.setWordWrap(True)
+            layout.addWidget(self.name_edit)
+
+            scroll = QScrollArea()
+            scroll.setWidgetResizable(True)
+            form_host = QWidget()
+            form = QFormLayout(form_host)
+            for block in ScoreBlockKey:
+                combo = QComboBox()
+                for level in ImportanceLevel:
+                    combo.addItem(level.value, userData=level)
+                current = profile.block_importance.get(block, ImportanceLevel.IGNORE)
+                combo.setCurrentText(current.value)
+                self._combos[block] = combo
+                form.addRow(BLOCK_LABELS[block], combo)
+            scroll.setWidget(form_host)
+            layout.addWidget(scroll, stretch=1)
+
+            buttons = QDialogButtonBox(
+                QDialogButtonBox.StandardButton.Save
+                | QDialogButtonBox.StandardButton.Cancel
+            )
+            buttons.button(QDialogButtonBox.StandardButton.Save).setText("Save as new profile")
+            buttons.accepted.connect(self.accept)
+            buttons.rejected.connect(self.reject)
+            layout.addWidget(buttons)
+
+        def importance_map(self) -> dict[ScoreBlockKey, ImportanceLevel]:
+            return {block: combo.currentData() for block, combo in self._combos.items()}
+
     class FlatSearcherWindow(QMainWindow):
         def __init__(self) -> None:
             super().__init__()
@@ -105,6 +171,9 @@ def _create_main_window(config: DesktopUIConfig):
             self._rows = []
             self._map_ready = False
             self._current_listing_id: int | None = None
+            self._profile_key = config.profile_key
+            self._suppress_profile_signal = False
+            self._comparison_ids: list[int] = []
 
             root = QWidget()
             root_layout = QVBoxLayout(root)
@@ -117,10 +186,35 @@ def _create_main_window(config: DesktopUIConfig):
 
             toolbar = QHBoxLayout()
             self.summary_label = QLabel("")
+            self.profile_combo = QComboBox()
+            self.profile_combo.currentIndexChanged.connect(self._on_profile_changed)
+            edit_profile_button = QPushButton("Edit profile")
+            edit_profile_button.clicked.connect(self._edit_profile)
+            delete_profile_button = QPushButton("Delete profile")
+            delete_profile_button.clicked.connect(self._delete_profile)
             refresh_button = QPushButton("Refresh")
             refresh_button.clicked.connect(self.reload_data)
+
+            self.session_combo = QComboBox()
+            self.session_combo.addItem("Saved sessions...", userData=None)
+            save_session_button = QPushButton("Save session")
+            save_session_button.clicked.connect(self._save_session)
+            load_session_button = QPushButton("Load session")
+            load_session_button.clicked.connect(self._load_session)
+            delete_session_button = QPushButton("Delete session")
+            delete_session_button.clicked.connect(self._delete_session)
+
             toolbar.addWidget(self.summary_label)
             toolbar.addStretch()
+            toolbar.addWidget(QLabel("Session"))
+            toolbar.addWidget(self.session_combo)
+            toolbar.addWidget(save_session_button)
+            toolbar.addWidget(load_session_button)
+            toolbar.addWidget(delete_session_button)
+            toolbar.addWidget(QLabel("Profile"))
+            toolbar.addWidget(self.profile_combo)
+            toolbar.addWidget(edit_profile_button)
+            toolbar.addWidget(delete_profile_button)
             toolbar.addWidget(refresh_button)
 
             content_splitter = QSplitter(Qt.Orientation.Horizontal)
@@ -129,6 +223,7 @@ def _create_main_window(config: DesktopUIConfig):
             self.tabs = QTabWidget()
             self.tabs.addTab(self._build_ranking_tab(), "Ranking")
             self.tabs.addTab(self._build_map_tab(), "Map")
+            self.tabs.addTab(self._build_comparison_tab(), "Comparison")
             content_splitter.addWidget(self.tabs)
             content_splitter.setStretchFactor(0, 0)
             content_splitter.setStretchFactor(1, 1)
@@ -140,9 +235,9 @@ def _create_main_window(config: DesktopUIConfig):
             self.setCentralWidget(root)
 
             self._load_district_options()
+            self._load_profile_options()
+            self._load_session_options()
             self.reload_data()
-
-        # ---- Layout construction -------------------------------------------------
 
         def _build_filter_panel(self) -> QWidget:
             panel = QGroupBox("Filters")
@@ -215,9 +310,12 @@ def _create_main_window(config: DesktopUIConfig):
             self.reject_button.clicked.connect(self._toggle_rejected)
             self.open_button = QPushButton("Open on SS.com")
             self.open_button.clicked.connect(self._open_in_browser)
+            self.compare_button = QPushButton("Add to comparison")
+            self.compare_button.clicked.connect(self._add_to_comparison)
             actions.addWidget(self.favorite_button)
             actions.addWidget(self.reject_button)
             actions.addWidget(self.open_button)
+            actions.addWidget(self.compare_button)
             actions.addStretch()
 
             self.detail_text = QPlainTextEdit()
@@ -257,7 +355,23 @@ def _create_main_window(config: DesktopUIConfig):
             self.map_view.loadFinished.connect(self._map_loaded)
             return map_splitter
 
-        # ---- Filters -------------------------------------------------------------
+        def _build_comparison_tab(self) -> QWidget:
+            widget = QWidget()
+            layout = QVBoxLayout(widget)
+            info = QLabel(
+                f"Add {MIN_COMPARISON}-{MAX_COMPARISON} apartments from the ranking tab "
+                "to compare them side by side."
+            )
+            info.setWordWrap(True)
+            self.comparison_table = QTableWidget(0, 0)
+            self.comparison_table.verticalHeader().setVisible(True)
+            self.comparison_table.setEditTriggers(QTableWidget.EditTrigger.NoEditTriggers)
+            clear_button = QPushButton("Clear comparison")
+            clear_button.clicked.connect(self._clear_comparison)
+            layout.addWidget(info)
+            layout.addWidget(self.comparison_table, stretch=1)
+            layout.addWidget(clear_button)
+            return widget
 
         def current_tab(self) -> WorkflowTab:
             return self._workflow_tabs[self.tab_bar.currentIndex()]
@@ -309,21 +423,214 @@ def _create_main_window(config: DesktopUIConfig):
                 district = row["district"]
                 self.district_combo.addItem(district, userData=district)
 
-        # ---- Data loading --------------------------------------------------------
+        def _load_profile_options(self) -> None:
+            with open_database(config.database_path) as connection:
+                repository = ProfileRepository(connection)
+                repository.sync_builtin_profiles()
+                summaries = repository.list_profiles()
+            self._suppress_profile_signal = True
+            self.profile_combo.clear()
+            selected_index = 0
+            for index, summary in enumerate(summaries):
+                self.profile_combo.addItem(summary.profile_name, userData=summary.profile_key)
+                if summary.profile_key == self._profile_key:
+                    selected_index = index
+            self.profile_combo.setCurrentIndex(selected_index)
+            self._suppress_profile_signal = False
+            self._ensure_scores_for_profile(self._profile_key)
+
+        def _on_profile_changed(self, _index: int) -> None:
+            if self._suppress_profile_signal:
+                return
+            profile_key = self.profile_combo.currentData()
+            if not profile_key or profile_key == self._profile_key:
+                return
+            self._profile_key = profile_key
+            self._ensure_scores_for_profile(profile_key)
+            self.reload_data()
+
+        def _ensure_scores_for_profile(self, profile_key: str) -> None:
+            """Recalculate persisted scores so ranking/map reflect the profile."""
+
+            try:
+                ScoreRecalculationService(config.database_path).recalculate(profile_key)
+            except ValueError:
+                pass
+
+        def _edit_profile(self) -> None:
+            with open_database(config.database_path) as connection:
+                profile = ProfileRepository(connection).load_profile(self._profile_key)
+            if profile is None:
+                return
+            dialog = ProfileEditorDialog(self, profile)
+            if dialog.exec() != QDialog.DialogCode.Accepted:
+                return
+            name, accepted = QInputDialog.getText(
+                self, "Save profile", "New profile name:", text=f"{profile.name} (custom)"
+            )
+            if not accepted or not name.strip():
+                return
+            new_profile = custom_profile(
+                key=slugify_profile_name(name),
+                name=name.strip(),
+                importance=dialog.importance_map(),
+                base_profile_key=profile.key,
+            )
+            with open_database(config.database_path) as connection:
+                ProfileRepository(connection).save_profile(new_profile)
+            self._profile_key = new_profile.key
+            self._ensure_scores_for_profile(new_profile.key)
+            self._load_profile_options()
+            self.reload_data()
+
+        def _delete_profile(self) -> None:
+            with open_database(config.database_path) as connection:
+                profile = ProfileRepository(connection).load_profile(self._profile_key)
+            if profile is None:
+                return
+            if profile.is_builtin:
+                QMessageBox.information(
+                    self, "Built-in profile", "Built-in profiles cannot be deleted."
+                )
+                return
+            with open_database(config.database_path) as connection:
+                ProfileRepository(connection).delete_profile(self._profile_key)
+            self._profile_key = "for_living_mortgage"
+            self._load_profile_options()
+            self.reload_data()
+
+        def _add_to_comparison(self) -> None:
+            listing_id = self._selected_listing_id()
+            if listing_id is None:
+                return
+            if listing_id in self._comparison_ids:
+                return
+            if len(self._comparison_ids) >= MAX_COMPARISON:
+                QMessageBox.information(
+                    self,
+                    "Comparison full",
+                    f"Comparison supports at most {MAX_COMPARISON} apartments.",
+                )
+                return
+            self._comparison_ids.append(listing_id)
+            self._refresh_comparison()
+
+        def _clear_comparison(self) -> None:
+            self._comparison_ids = []
+            self._refresh_comparison()
+
+        def _refresh_comparison(self) -> None:
+            if len(self._comparison_ids) < MIN_COMPARISON:
+                self.comparison_table.setRowCount(0)
+                self.comparison_table.setColumnCount(0)
+                return
+            with open_database(config.database_path) as connection:
+                repository = ListingReadRepository(connection)
+                details = tuple(
+                    detail
+                    for detail in (
+                        repository.load_detail(listing_id, self._profile_key)
+                        for listing_id in self._comparison_ids
+                    )
+                    if detail is not None
+                )
+            if len(details) < MIN_COMPARISON:
+                self.comparison_table.setRowCount(0)
+                self.comparison_table.setColumnCount(0)
+                return
+            view = build_comparison_view(details)
+            self.comparison_table.setColumnCount(len(view.columns))
+            self.comparison_table.setHorizontalHeaderLabels(
+                [column.title for column in view.columns]
+            )
+            self.comparison_table.setRowCount(len(view.rows))
+            self.comparison_table.setVerticalHeaderLabels([row.label for row in view.rows])
+            for row_index, row in enumerate(view.rows):
+                for column_index, value in enumerate(row.values):
+                    self.comparison_table.setItem(
+                        row_index, column_index, QTableWidgetItem(value)
+                    )
+            self.comparison_table.resizeColumnsToContents()
+
+        def _load_session_options(self) -> None:
+            with open_database(config.database_path) as connection:
+                summaries = SearchSessionRepository(connection).list_sessions()
+            self.session_combo.clear()
+            self.session_combo.addItem("Saved sessions...", userData=None)
+            for summary in summaries:
+                self.session_combo.addItem(summary.session_name, userData=summary.session_id)
+
+        def _save_session(self) -> None:
+            name, accepted = QInputDialog.getText(
+                self, "Save session", "Session name:"
+            )
+            if not accepted or not name.strip():
+                return
+            with open_database(config.database_path) as connection:
+                SearchSessionRepository(connection).save_session(
+                    session_name=name.strip(),
+                    selected_profile_key=self._profile_key,
+                    filters=self._base_filters(),
+                    sort_mode="score_desc",
+                )
+            self._load_session_options()
+            QMessageBox.information(self, "Session saved", "Your search session was saved.")
+
+        def _load_session(self) -> None:
+            session_id = self.session_combo.currentData()
+            if session_id is None:
+                return
+            with open_database(config.database_path) as connection:
+                session = SearchSessionRepository(connection).load_session(session_id)
+            if session is None:
+                return
+            self._apply_filters_to_widgets(session.filters)
+            if session.selected_profile_key:
+                self._profile_key = session.selected_profile_key
+                self._ensure_scores_for_profile(self._profile_key)
+                self._load_profile_options()
+            self.reload_data()
+
+        def _delete_session(self) -> None:
+            session_id = self.session_combo.currentData()
+            if session_id is None:
+                return
+            with open_database(config.database_path) as connection:
+                SearchSessionRepository(connection).delete_session(session_id)
+            self._load_session_options()
+
+        def _apply_filters_to_widgets(self, filters: ListingFilters) -> None:
+            self.price_min.setValue(filters.price_min or 0)
+            self.price_max.setValue(filters.price_max or 0)
+            self.area_min.setValue(int(filters.area_min or 0))
+            self.area_max.setValue(int(filters.area_max or 0))
+            districts = sorted(filters.districts)
+            target_index = 0
+            if districts:
+                found = self.district_combo.findData(districts[0])
+                target_index = found if found >= 0 else 0
+            self.district_combo.setCurrentIndex(target_index)
+            self.only_confirmed_layout.setChecked(filters.only_confirmed_layout)
+            self.only_without_conflict.setChecked(filters.only_without_room_conflict)
+            self.only_floor_plan.setChecked(filters.only_with_floor_plan)
+            self.hide_high_mortgage.setChecked(filters.hide_high_mortgage_risk)
+            self.hide_stove.setChecked(filters.hide_stove_heating)
+            self.hide_wooden.setChecked(filters.hide_wooden_buildings)
+            self.hide_viewed.setChecked(filters.hide_viewed)
 
         def reload_data(self) -> None:
             init_database(config.database_path)
             filters = self._active_filters()
             with open_database(config.database_path) as connection:
                 repository = ListingReadRepository(connection)
-                candidates = repository.load_candidates(config.profile_key)
+                candidates = repository.load_candidates(self._profile_key)
                 ranked = rank_candidates(candidates, filters)
                 self._rows = [(item, ranking_row_view_model(item)) for item in ranked]
                 visible_ids = {item.candidate.listing_id for item in ranked}
                 markers = tuple(
                     marker
                     for marker in build_map_markers(
-                        repository.load_map_points(config.profile_key)
+                        repository.load_map_points(self._profile_key)
                     )
                     if marker.listing_id in visible_ids
                 )
@@ -337,6 +644,7 @@ def _create_main_window(config: DesktopUIConfig):
             self._map_ready = False
             self.map_view.setHtml(build_leaflet_html(markers))
             self._restore_selection()
+            self._refresh_comparison()
 
         def _populate_table(self) -> None:
             self.table.setRowCount(len(self._rows))
@@ -372,8 +680,6 @@ def _create_main_window(config: DesktopUIConfig):
                         break
             self.table.selectRow(target_row)
 
-        # ---- Detail and actions --------------------------------------------------
-
         def _selected_listing_id(self) -> int | None:
             selected_rows = self.table.selectionModel().selectedRows()
             if not selected_rows:
@@ -388,7 +694,7 @@ def _create_main_window(config: DesktopUIConfig):
             with open_database(config.database_path) as connection:
                 detail = ListingReadRepository(connection).load_detail(
                     listing_id,
-                    config.profile_key,
+                    self._profile_key,
                 )
                 if detail is not None and not detail.is_favorite and not detail.is_rejected:
                     UserStateRepository(connection).mark_viewed(
@@ -427,7 +733,7 @@ def _create_main_window(config: DesktopUIConfig):
                 return
             with open_database(config.database_path) as connection:
                 detail = ListingReadRepository(connection).load_detail(
-                    listing_id, config.profile_key
+                    listing_id, self._profile_key
                 )
                 if detail is None:
                     return
@@ -451,7 +757,7 @@ def _create_main_window(config: DesktopUIConfig):
                 return
             with open_database(config.database_path) as connection:
                 detail = ListingReadRepository(connection).load_detail(
-                    listing_id, config.profile_key
+                    listing_id, self._profile_key
                 )
             if detail is not None and detail.ss_url:
                 webbrowser.open(detail.ss_url)

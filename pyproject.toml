@@ -19,9 +19,6 @@ dev = [
     "pytest>=8.0",
     "ruff>=0.8",
 ]
-geo = [
-    "geopy>=2.4",
-]
 ui = [
     "PySide6>=6.7",
 ]

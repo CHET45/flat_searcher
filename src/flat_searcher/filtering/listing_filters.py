@@ -29,6 +29,7 @@ class ListingCandidate:
     stove_heating_risk: bool = False
     wooden_building_risk: bool = False
     has_floor_plan: bool = False
+    has_notes: bool = False
     rtu_score: float | None = None
     transport_score: float | None = None
     station_score: float | None = None

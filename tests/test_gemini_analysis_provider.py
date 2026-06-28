@@ -12,15 +12,11 @@ from flat_searcher.services.gemini_analysis import GeminiAnalysisProvider
 @dataclass(frozen=True)
 class FakeBinaryResult:
     content: bytes
-    content_type: str
 
 
 class FakeBinaryFetcher:
     def fetch_bytes(self, url: str) -> FakeBinaryResult:
-        return FakeBinaryResult(
-            content=b"\xff\xd8\xff" + url.encode(),
-            content_type="image/jpeg",
-        )
+        return FakeBinaryResult(content=b"\xff\xd8\xff" + url.encode())
 
 
 class FakeModelClient:

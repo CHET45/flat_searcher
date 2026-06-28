@@ -7,6 +7,7 @@ import sqlite3
 from dataclasses import dataclass
 
 from flat_searcher.ai import Pass1ImageAnalysis, Pass2ListingAnalysis
+from flat_searcher.db.layout_prior_repository import LayoutPriorRepository
 
 
 @dataclass(frozen=True)
@@ -19,6 +20,10 @@ class ListingForAnalysis:
     detail_fields: dict[str, object]
     image_ids: tuple[int, ...]
     image_urls: tuple[str, ...]
+    building_series: str | None = None
+    building_type: str | None = None
+    area_m2: float | None = None
+    layout_priors: tuple[dict[str, object], ...] = ()
 
 
 class AIAnalysisRepository:
@@ -33,7 +38,7 @@ class AIAnalysisRepository:
     ) -> tuple[ListingForAnalysis, ...]:
         query = """
             SELECT l.id, l.ss_id, l.ss_url, l.declared_rooms_ss, l.description_text,
-                   l.detail_fields_json
+                   l.detail_fields_json, l.building_series, l.building_type, l.area_m2
             FROM listings l
             WHERE l.listing_status = 'active'
               AND l.description_text IS NOT NULL
@@ -150,6 +155,12 @@ class AIAnalysisRepository:
             """,
             (row["id"],),
         ).fetchall()
+        priors = LayoutPriorRepository(self.connection).find_candidates(
+            series_name=row["building_series"],
+            building_type=row["building_type"],
+            area_m2=row["area_m2"],
+            room_count=row["declared_rooms_ss"],
+        )
         return ListingForAnalysis(
             listing_id=row["id"],
             ss_id=row["ss_id"],
@@ -159,6 +170,10 @@ class AIAnalysisRepository:
             detail_fields=json.loads(row["detail_fields_json"] or "{}"),
             image_ids=tuple(image_row["id"] for image_row in image_rows),
             image_urls=tuple(image_row["source_url"] for image_row in image_rows),
+            building_series=row["building_series"],
+            building_type=row["building_type"],
+            area_m2=row["area_m2"],
+            layout_priors=tuple(prior.to_prompt_dict() for prior in priors),
         )
 
     def _apply_pass1_image_metadata(

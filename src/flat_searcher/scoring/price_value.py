@@ -45,7 +45,6 @@ class MarketBaseline:
 
 @dataclass(frozen=True)
 class PriceValueResult:
-    price_per_m2_score: float | None
     relative_market_score: float | None
     suspicious_low_price_flag: bool
     baseline: MarketBaseline | None
@@ -61,7 +60,7 @@ def choose_market_baseline(
         (MarketBaselineLevel.SERIES_BUILDING, _same_series),
         (MarketBaselineLevel.AI_ADJUSTED, _same_ai_room_context),
         (MarketBaselineLevel.DISTRICT, _same_district_context),
-        (MarketBaselineLevel.RIGA, lambda item, target_listing: True),
+        (MarketBaselineLevel.RIGA, lambda item, _target: True),
     )
 
     fallback: MarketBaseline | None = None
@@ -84,12 +83,14 @@ def calculate_price_value(
     baseline = choose_market_baseline(target, listings)
     price_per_m2 = target.price_per_m2
     if baseline is None or price_per_m2 is None:
-        return PriceValueResult(None, None, False, baseline)
+        return PriceValueResult(
+            relative_market_score=None,
+            suspicious_low_price_flag=False,
+            baseline=baseline,
+        )
 
-    relative_score = relative_market_score(price_per_m2, baseline.median_price_per_m2)
     return PriceValueResult(
-        price_per_m2_score=relative_score,
-        relative_market_score=relative_score,
+        relative_market_score=relative_market_score(price_per_m2, baseline.median_price_per_m2),
         suspicious_low_price_flag=is_suspiciously_low_price(price_per_m2, baseline),
         baseline=baseline,
     )
