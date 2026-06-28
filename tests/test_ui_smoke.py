@@ -3,55 +3,11 @@ from pathlib import Path
 from unittest import TestCase
 
 from flat_searcher.filtering import ListingFilters
-from flat_searcher.presentation import DetailViewModel
 from flat_searcher.ui import DesktopUIConfig, UIDependencyError
-from flat_searcher.ui.app import _filters_from_dict, _filters_to_js, _format_detail_text
+from flat_searcher.ui.app import _filters_from_dict, _filters_to_js
 from flat_searcher.ui.translations import translate, ui_strings
 
 _HAS_PYSIDE6 = importlib.util.find_spec("PySide6") is not None
-
-
-def _sample_view_model() -> DetailViewModel:
-    return DetailViewModel(
-        listing_id=1,
-        title="Teika 2-room apartment",
-        top_lines=("Price: 90 000 EUR", "Area: 50 m2"),
-        flags_lines=("No major flags",),
-        rating_lines=("Overall score: 80.0", "Breakdown:", "Price value: 82.0"),
-        price_value_lines=("Price value score: 82.0",),
-        layout_lines=("AI-effective private rooms: 2",),
-        mortgage_lines=("Mortgage risk: Low",),
-        location_lines=("Address precision: exact_house",),
-        history_lines=("Snapshots: 1",),
-        original_listing_text="Nice apartment near the park.",
-        ss_url="https://www.ss.com/msg/1.html",
-    )
-
-
-class DetailTextFormattingTests(TestCase):
-    def test_format_detail_text_includes_sections_and_original_text(self) -> None:
-        text = _format_detail_text(_sample_view_model())
-
-        self.assertIn("Teika 2-room apartment", text)
-        self.assertIn("Original listing: https://www.ss.com/msg/1.html", text)
-        self.assertIn("Layout:", text)
-        self.assertIn("Mortgage:", text)
-        self.assertIn("Original Listing Text", text)
-        self.assertIn("Nice apartment near the park.", text)
-
-    def test_format_detail_text_never_leaks_raw_ai_fields(self) -> None:
-        text = _format_detail_text(_sample_view_model())
-
-        for forbidden in ("pass1_output", "pass2_output", "prompt", "json"):
-            self.assertNotIn(forbidden, text.lower())
-
-    def test_format_detail_text_can_translate_static_labels_to_russian(self) -> None:
-        text = _format_detail_text(_sample_view_model(), "ru")
-
-        self.assertIn("Оригинальное объявление: https://www.ss.com/msg/1.html", text)
-        self.assertIn("Главное:", text)
-        self.assertIn("Планировка:", text)
-        self.assertIn("Цена: 90 000 EUR", text)
 
 
 class UIFilterTests(TestCase):
@@ -152,3 +108,19 @@ class UIAIQueueControlTests(TestCase):
         self.assertIn("request_stop", source)
         self.assertIn("ai_stopping", source)
         self.assertIn("ai_stopped", source)
+
+
+class UIBackgroundScoringTests(TestCase):
+    def test_backend_recalculates_scores_off_the_main_thread(self) -> None:
+        source = (Path(__file__).parents[1] / "src" / "flat_searcher" / "ui" / "app.py").read_text(encoding="utf-8")
+
+        self.assertIn("class RecalcWorker", source)
+        self.assertIn("def prepareProfile(self, profile_key: str)", source)
+        self.assertIn("scoresReady = Signal(str)", source)
+        self.assertNotIn("def _ensure_scores", source)
+
+    def test_web_app_gates_reload_on_prepared_scores(self) -> None:
+        source = (Path(__file__).parents[1] / "src" / "flat_searcher" / "ui" / "web" / "app.js").read_text(encoding="utf-8")
+
+        self.assertIn('callJson("prepareProfile"', source)
+        self.assertIn("bridge.scoresReady.connect(onScoresReady)", source)

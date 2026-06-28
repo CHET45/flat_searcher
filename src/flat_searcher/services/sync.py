@@ -349,7 +349,13 @@ class ListingSyncService:
 
     def _fetch_list_page(self, page_number: int, url: str) -> list[ListingSummary]:
         logger.debug("sync-listings fast list fetch page %s: %s", page_number, url)
-        list_page = self._new_http_client().fetch_text(url)
+        try:
+            list_page = self._new_http_client().fetch_text(url)
+        except FetchError:
+            logger.warning(
+                "sync-listings fast list fetch failed, skipping page %s: %s", page_number, url
+            )
+            return []
         summaries = self.list_parser.parse(list_page.text, list_page.url)
         logger.debug(
             "sync-listings fast list parsed page %s: requested=%s final=%s parsed=%s",

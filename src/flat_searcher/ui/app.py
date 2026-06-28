@@ -23,7 +23,6 @@ from flat_searcher.db.user_state_repository import UserStateRepository
 from flat_searcher.filtering import ListingFilters
 from flat_searcher.mapping import MapReferencePoint, build_map_markers
 from flat_searcher.presentation import (
-    DetailViewModel,
     WorkflowTab,
     filters_for_tab,
 )
@@ -54,6 +53,8 @@ from flat_searcher.ui.translations import LANGUAGES, translate, ui_strings
 
 WEB_DIR = Path(__file__).resolve().parent / "web"
 logger = logging.getLogger(__name__)
+
+AUTO_ANALYSIS_CHUNK = 12
 
 
 class UIDependencyError(RuntimeError):
@@ -250,23 +251,52 @@ def _create_main_window(config: DesktopUIConfig):
         def _emit_progress(self, payload: dict[str, object]) -> None:
             self.progress.emit(_dumps(payload))
 
+    class RecalcWorker(QObject):
+        finished = Signal(str)
+        failed = Signal(str, str)
+
+        def __init__(self, database_path: Path, profile_key: str) -> None:
+            super().__init__()
+            self._database_path = database_path
+            self._profile_key = profile_key
+
+        @Slot()
+        def run(self) -> None:
+            try:
+                ScoreRecalculationService(self._database_path).recalculate(self._profile_key)
+            except ValueError:
+                logger.info("UI score recalc skipped unknown profile: %s", self._profile_key)
+            except Exception as error:
+                logger.exception("UI score recalc failed: profile=%s", self._profile_key)
+                self.failed.emit(self._profile_key, str(error))
+                return
+            self.finished.emit(self._profile_key)
+
     class UiBridge(QObject):
         syncFinished = Signal(str)
         syncFailed = Signal(str)
         aiFinished = Signal(str)
         aiFailed = Signal(str)
+        aiRefresh = Signal()
         pipelineProgress = Signal(str)
+        scoresReady = Signal(str)
 
         def __init__(self) -> None:
             super().__init__()
             self._language = config.language
             self._profile_key = config.profile_key
             self._scored: set[str] = set()
+            self._recalc_thread: QThread | None = None
+            self._recalc_worker: RecalcWorker | None = None
+            self._recalc_key: str | None = None
+            self._recalc_pending_key: str | None = None
             self._sync_thread: QThread | None = None
             self._sync_worker: SyncWorker | None = None
             self._ai_thread: QThread | None = None
             self._ai_worker: AIQueueWorker | None = None
             self._ai_attempted_ids: set[int] = set()
+            self._ai_session_analyzed = 0
+            self._ai_session_failed = 0
             self._latest_pipeline_status: dict[str, object] | None = None
             self._last_pipeline_emit_json: str | None = None
             self._pipeline_flush_timer = QTimer(self)
@@ -283,7 +313,6 @@ def _create_main_window(config: DesktopUIConfig):
 
         @Slot(result=str)
         def bootstrap(self) -> str:
-            _ensure_scores(config.database_path, self._profile_key, self._scored)
             return _dumps(
                 {
                     "strings": _strings(self._language),
@@ -308,7 +337,6 @@ def _create_main_window(config: DesktopUIConfig):
                     self._profile_key,
                     state.get("filters") or {},
                     state.get("tab") or "all",
-                    self._scored,
                 )
             )
 
@@ -347,7 +375,6 @@ def _create_main_window(config: DesktopUIConfig):
             new_key = _save_profile_importance(config, base_key, name, json.loads(importance_json))
             self._profile_key = new_key
             self._scored.discard(new_key)
-            _ensure_scores(config.database_path, new_key, self._scored)
             return _dumps(
                 {"profiles": _profiles_payload(config, self._language), "activeProfile": new_key}
             )
@@ -357,7 +384,6 @@ def _create_main_window(config: DesktopUIConfig):
             _delete_profile(config, key)
             if self._profile_key == key:
                 self._profile_key = "for_living_mortgage"
-                _ensure_scores(config.database_path, self._profile_key, self._scored)
             return _dumps(
                 {
                     "profiles": _profiles_payload(config, self._language),
@@ -373,8 +399,20 @@ def _create_main_window(config: DesktopUIConfig):
         @Slot(str, result=str)
         def setProfile(self, key: str) -> str:
             self._profile_key = key
-            _ensure_scores(config.database_path, key, self._scored)
             return "ok"
+
+        @Slot(str, result=str)
+        def prepareProfile(self, profile_key: str) -> str:
+            key = profile_key or self._profile_key
+            self._profile_key = key
+            if key in self._scored:
+                return _dumps({"profileKey": key, "ready": True})
+            if self._recalc_thread is not None:
+                if self._recalc_key != key:
+                    self._recalc_pending_key = key
+                return _dumps({"profileKey": key, "ready": False})
+            self._start_recalc(key)
+            return _dumps({"profileKey": key, "ready": False})
 
         @Slot(str, result=str)
         def setLanguage(self, code: str) -> str:
@@ -429,17 +467,20 @@ def _create_main_window(config: DesktopUIConfig):
             )
             self._ai_queue_order = list(payload["order"])
             self._ai_reanalysis_ids = set(payload["reanalysisIds"])
+            self._arm_ai_auto_timer()
             self._maybe_start_ai_queue()
             return _dumps(payload)
 
         @Slot(result=str)
         def ensureAIQueueRunning(self) -> str:
+            self._arm_ai_auto_timer()
             started = self._maybe_start_ai_queue(manual=False)
             return _dumps({"started": started, "busy": self._ai_thread is not None, "paused": self._ai_paused})
 
         @Slot(result=str)
         def startAIQueue(self) -> str:
             self._ai_paused = False
+            self._arm_ai_auto_timer()
             started = self._maybe_start_ai_queue(manual=True)
             return _dumps({"started": started, "busy": self._ai_thread is not None, "paused": self._ai_paused})
 
@@ -540,25 +581,31 @@ def _create_main_window(config: DesktopUIConfig):
                 listing_id for listing_id in force_listing_ids if listing_id in set(order)
             )
             if not order:
+                self._ai_auto_timer.stop()
                 return False
             self._ai_queue_order = list(order)
             self._ai_reanalysis_ids = set(force_listing_ids)
-            self._set_pipeline_status({"stage": "ai_prepare", "current": 0, "total": len(order)})
+            chunk = order[:AUTO_ANALYSIS_CHUNK]
+            chunk_set = set(chunk)
+            chunk_force = frozenset(
+                listing_id for listing_id in force_listing_ids if listing_id in chunk_set
+            )
+            self._set_pipeline_status({"stage": "ai_prepare", "current": 0, "total": len(chunk)})
             self._emit_pipeline_status_now()
 
             thread = QThread(self)
             worker = AIQueueWorker(
                 config.database_path,
                 self._profile_key,
-                order,
-                force_listing_ids,
+                chunk,
+                chunk_force,
             )
             worker.moveToThread(thread)
             thread.started.connect(lambda: logger.info("UI AI queue thread started"))
             thread.started.connect(worker.run)
             worker.progress.connect(self._on_pipeline_progress)
-            worker.finished.connect(lambda result, attempted=order, forced=force_listing_ids: self._on_ai_finished(result, attempted, forced))
-            worker.failed.connect(lambda message, attempted=order: self._on_ai_failed(message, attempted))
+            worker.finished.connect(lambda result, attempted=chunk, forced=chunk_force: self._on_ai_finished(result, attempted, forced))
+            worker.failed.connect(lambda message, attempted=chunk: self._on_ai_failed(message, attempted))
             worker.finished.connect(thread.quit)
             worker.failed.connect(thread.quit)
             worker.finished.connect(worker.deleteLater)
@@ -568,7 +615,7 @@ def _create_main_window(config: DesktopUIConfig):
             thread.finished.connect(self._clear_ai_thread)
             self._ai_thread = thread
             self._ai_worker = worker
-            logger.info("UI bridge starting AI queue thread: queued=%s", len(order))
+            logger.info("UI bridge starting AI queue chunk: chunk=%s remaining=%s", len(chunk), len(order))
             thread.start()
             return True
 
@@ -578,51 +625,74 @@ def _create_main_window(config: DesktopUIConfig):
             attempted_ids: tuple[int, ...],
             force_listing_ids: frozenset[int],
         ) -> None:
-            logger.info("UI bridge AI queue finished signal: %s", result)
+            logger.info("UI bridge AI queue chunk finished signal: %s", result)
             processed_ids = attempted_ids[: max(0, result.ai.checked_count)]
             self._ai_attempted_ids.update(processed_ids)
             self._ai_reanalysis_ids.difference_update(force_listing_ids.intersection(processed_ids))
             self._scored.clear()
             self._scored.add(self._profile_key)
+            self._ai_session_analyzed += result.ai.analyzed_count
+            self._ai_session_failed += result.ai.failed_count
+
             if result.ai.cancelled:
                 self._ai_paused = True
                 self._set_pipeline_status(
                     {
                         "stage": "ai_stopped",
-                        "checked": result.ai.checked_count,
-                        "analyzed": result.ai.analyzed_count,
-                        "failed": result.ai.failed_count,
+                        "analyzed": self._ai_session_analyzed,
+                        "failed": self._ai_session_failed,
                     }
                 )
-                message = translate(self._language, "ai_queue.stopped_summary").format(
-                    analyzed=result.ai.analyzed_count,
-                    failed=result.ai.failed_count,
+                self._emit_pipeline_status_now()
+                self.aiFinished.emit(
+                    translate(self._language, "ai_queue.stopped_summary").format(
+                        analyzed=self._ai_session_analyzed,
+                        failed=self._ai_session_failed,
+                    )
                 )
-            else:
-                self._set_pipeline_status(
-                    {
-                        "stage": "ai_finished",
-                        "checked": result.ai.checked_count,
-                        "analyzed": result.ai.analyzed_count,
-                        "failed": result.ai.failed_count,
-                    }
-                )
-                message = translate(self._language, "ai_queue.finished_summary").format(
-                    analyzed=result.ai.analyzed_count,
-                    failed=result.ai.failed_count,
-                )
-            self._emit_pipeline_status_now()
-            self.aiFinished.emit(message)
-            if not result.ai.cancelled:
+                self._ai_session_analyzed = 0
+                self._ai_session_failed = 0
+                return
+
+            if self._has_pending_analysis():
+                self.aiRefresh.emit()
                 QTimer.singleShot(1500, lambda: self._maybe_start_ai_queue(manual=False))
+                return
+
+            self._set_pipeline_status(
+                {
+                    "stage": "ai_finished",
+                    "analyzed": self._ai_session_analyzed,
+                    "failed": self._ai_session_failed,
+                }
+            )
+            self._emit_pipeline_status_now()
+            self.aiFinished.emit(
+                translate(self._language, "ai_queue.finished_summary").format(
+                    analyzed=self._ai_session_analyzed,
+                    failed=self._ai_session_failed,
+                )
+            )
+            self._ai_session_analyzed = 0
+            self._ai_session_failed = 0
 
         def _on_ai_failed(self, message: str, attempted_ids: tuple[int, ...]) -> None:
             logger.error("UI bridge AI queue failed signal: %s", message)
             self._ai_attempted_ids.update(attempted_ids)
             self._ai_paused = True
+            self._ai_session_analyzed = 0
+            self._ai_session_failed = 0
             self._set_pipeline_status({"stage": "failed", "message": message})
             self._emit_pipeline_status_now()
             self.aiFailed.emit(message)
+
+        def _has_pending_analysis(self) -> bool:
+            order, _ = _analysis_order_for_run(
+                config.database_path,
+                tuple(self._ai_queue_order),
+                frozenset(self._ai_reanalysis_ids),
+            )
+            return any(listing_id not in self._ai_attempted_ids for listing_id in order)
 
 
         @Slot(str)
@@ -671,6 +741,48 @@ def _create_main_window(config: DesktopUIConfig):
             logger.info("UI bridge clearing AI queue thread state")
             self._ai_thread = None
             self._ai_worker = None
+
+        def _arm_ai_auto_timer(self) -> None:
+            if not self._ai_auto_timer.isActive():
+                self._ai_auto_timer.start()
+
+        def _start_recalc(self, key: str) -> None:
+            thread = QThread(self)
+            worker = RecalcWorker(config.database_path, key)
+            worker.moveToThread(thread)
+            thread.started.connect(worker.run)
+            worker.finished.connect(self._on_recalc_finished)
+            worker.failed.connect(self._on_recalc_failed)
+            worker.finished.connect(thread.quit)
+            worker.failed.connect(thread.quit)
+            worker.finished.connect(worker.deleteLater)
+            worker.failed.connect(worker.deleteLater)
+            thread.finished.connect(thread.deleteLater)
+            thread.finished.connect(self._clear_recalc_thread)
+            self._recalc_thread = thread
+            self._recalc_worker = worker
+            self._recalc_key = key
+            logger.info("UI score recalc thread starting: profile=%s", key)
+            thread.start()
+
+        def _on_recalc_finished(self, key: str) -> None:
+            logger.info("UI score recalc finished: profile=%s", key)
+            self._scored.add(key)
+            self.scoresReady.emit(key)
+
+        def _on_recalc_failed(self, key: str, message: str) -> None:
+            logger.error("UI score recalc failed signal: profile=%s error=%s", key, message)
+            self._scored.add(key)
+            self.scoresReady.emit(key)
+
+        def _clear_recalc_thread(self) -> None:
+            self._recalc_thread = None
+            self._recalc_worker = None
+            self._recalc_key = None
+            next_key = self._recalc_pending_key
+            self._recalc_pending_key = None
+            if next_key and next_key not in self._scored:
+                self._start_recalc(next_key)
 
     class FlatSearcherWindow(QMainWindow):
         def __init__(self) -> None:
@@ -939,16 +1051,6 @@ def _strings(language: str) -> dict[str, str]:
     return ui_strings(language)
 
 
-def _ensure_scores(database_path: Path, profile_key: str, scored: set[str]) -> None:
-    if profile_key in scored:
-        return
-    try:
-        ScoreRecalculationService(database_path).recalculate(profile_key)
-    except ValueError:
-        pass
-    scored.add(profile_key)
-
-
 def _filters_from_dict(data: dict) -> ListingFilters:
     def _single(value) -> frozenset:
         return frozenset({value}) if value not in (None, "", 0) else frozenset()
@@ -1041,10 +1143,8 @@ def _build_view(
     profile_key: str,
     filters_dict: dict,
     tab_value: str,
-    scored: set[str],
 ) -> dict:
     tr = _tr(language)
-    _ensure_scores(config.database_path, profile_key, scored)
     filters = filters_for_tab(WorkflowTab(tab_value), _filters_from_dict(filters_dict))
     with open_database(config.database_path) as connection:
         repository = ListingReadRepository(connection)
@@ -1450,95 +1550,3 @@ def _floor_plan_data_uri(path: str | None) -> str | None:
     mime, _ = mimetypes.guess_type(floor_plan.name)
     encoded = base64.b64encode(floor_plan.read_bytes()).decode("ascii")
     return f"data:{mime or 'image/jpeg'};base64,{encoded}"
-
-
-def _format_detail_text(
-    view_model: DetailViewModel,
-    language: str = "en",
-    position: int | None = None,
-) -> str:
-    """Plain-text rendering of a listing detail, retained for CLI and tests."""
-
-    def _t_detail(text: str) -> str:
-        return translate(language, text)
-
-    rating_lines = view_model.rating_lines
-    if position is not None:
-        rating_lines = (f"Position: #{position}", *rating_lines)
-
-    sections = [
-        _translate_display_text(language, view_model.title),
-        f"{_t_detail('Original listing')}: {view_model.ss_url}",
-        "",
-        _section(_t_detail("Top"), view_model.top_lines, language),
-        _section(_t_detail("Flags"), view_model.flags_lines, language),
-        _section(_t_detail("Rating"), rating_lines, language),
-        _section(_t_detail("Price value"), view_model.price_value_lines, language),
-        _section(_t_detail("Layout"), view_model.layout_lines, language),
-        _section(_t_detail("Mortgage"), view_model.mortgage_lines, language),
-        _section(_t_detail("Location"), view_model.location_lines, language),
-        _section(_t_detail("History"), view_model.history_lines, language),
-        "",
-        _t_detail("Original Listing Text"),
-        view_model.original_listing_text,
-    ]
-    return "\n".join(section for section in sections if section is not None)
-
-
-def _section(title: str, lines: tuple[str, ...], language: str = "en") -> str:
-    translated_lines = (_translate_detail_line(language, line) for line in lines)
-    return "\n".join((f"{title}:", *(f"  {line}" for line in translated_lines), ""))
-
-
-def _translate_detail_line(language: str, line: str) -> str:
-    if language == "en":
-        return line
-    label, separator, value = line.partition(":")
-    if not separator:
-        return _translate_display_text(language, line)
-    return f"{translate(language, label)}:{_translate_display_text(language, value)}"
-
-
-def _translate_display_text(language: str, text: str) -> str:
-    if not text or language == "en":
-        return text
-
-    exact = translate(language, text)
-    if exact != text:
-        return exact
-
-    if ", " in text:
-        parts = [_translate_display_text(language, part) for part in text.split(", ")]
-        return ", ".join(parts)
-
-    if text.endswith(" private"):
-        return text.removesuffix(" private") + " " + translate(language, "private")
-
-    replacements = (
-        ("Unknown district", translate(language, "Unknown district")),
-        ("Unknown street", translate(language, "Unknown street")),
-        ("EUR/m2", translate(language, "EUR/m2")),
-        (" m2", " " + translate(language, "m2")),
-        ("kitchen-living", translate(language, "kitchen-living")),
-        ("area unknown", translate(language, "area unknown")),
-        ("price unknown", translate(language, "price unknown")),
-        ("not analyzed yet", translate(language, "not analyzed yet")),
-        ("not calculated yet", translate(language, "not calculated yet")),
-        ("unknown", translate(language, "unknown")),
-        ("Unknown", translate(language, "Unknown")),
-        ("Yes", translate(language, "Yes")),
-        ("No", translate(language, "No")),
-        ("none", translate(language, "none")),
-        ("Confirmed", translate(language, "Confirmed")),
-        ("Likely", translate(language, "Likely")),
-        ("Unclear", translate(language, "Unclear")),
-        ("Conflict", translate(language, "Conflict")),
-        ("Critical", translate(language, "Critical")),
-        ("Medium", translate(language, "Medium")),
-        ("High", translate(language, "High")),
-        ("Low", translate(language, "Low")),
-    )
-    translated = text
-    for source, target in replacements:
-        translated = translated.replace(source, target)
-    return translated

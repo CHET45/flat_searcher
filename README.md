@@ -90,6 +90,8 @@ python -m flat_searcher process-listings `
 
 Geocoding is intentionally separate from `process-listings` because it makes external network
 requests. Run `geocode-listings` explicitly before processing when location scores are needed.
+Nominatim asks clients to identify themselves; set `FLAT_SEARCHER_GEOCODER_USER_AGENT` (for
+example to an address with your contact) to override the default geocoder User-Agent.
 
 The desktop UI command is available when optional UI dependencies are installed:
 

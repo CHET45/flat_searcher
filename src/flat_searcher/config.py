@@ -10,6 +10,7 @@ from pathlib import Path
 DEFAULT_SS_START_URL = "https://www.ss.com/lv/real-estate/flats/riga/all/sell/"
 DEFAULT_GEMINI_MODEL = "gemini-2.5-flash"
 DEFAULT_OVERPASS_ENDPOINT = "https://overpass-api.de/api/interpreter"
+DEFAULT_GEOCODER_USER_AGENT = "flat-searcher/0.1 (Riga apartment analyzer)"
 
 
 @dataclass(frozen=True)
@@ -24,6 +25,7 @@ class AppConfig:
     gemini_api_key: str | None = None
     gemini_model: str = DEFAULT_GEMINI_MODEL
     overpass_endpoint: str = DEFAULT_OVERPASS_ENDPOINT
+    geocoder_user_agent: str = DEFAULT_GEOCODER_USER_AGENT
 
     @classmethod
     def from_env(cls, database_override: Path | None = None) -> "AppConfig":
@@ -59,6 +61,9 @@ class AppConfig:
             gemini_model=os.environ.get("GEMINI_MODEL") or DEFAULT_GEMINI_MODEL,
             overpass_endpoint=(
                 os.environ.get("OVERPASS_ENDPOINT") or DEFAULT_OVERPASS_ENDPOINT
+            ),
+            geocoder_user_agent=(
+                os.environ.get("FLAT_SEARCHER_GEOCODER_USER_AGENT") or DEFAULT_GEOCODER_USER_AGENT
             ),
         )
 

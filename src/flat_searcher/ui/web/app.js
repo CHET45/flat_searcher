@@ -3,6 +3,7 @@
 let bridge = null;
 let syncPollTimer = null;
 let aiQueueRefreshTimer = null;
+let lastQueuePanelSig = null;
 
 const state = {
   view: "ranking",
@@ -30,6 +31,7 @@ const state = {
   filterBounds: defaultFilterBounds(),
   languages: [],
   syncBusy: false,
+  pendingReload: false,
   pipelineStatus: null,
   aiQueueOpen: false,
   aiQueueLoaded: false,
@@ -126,6 +128,7 @@ new QWebChannel(qt.webChannelTransport, (channel) => {
   bridge.syncFailed.connect(onSyncFailed);
   if (bridge.aiFinished) bridge.aiFinished.connect(onAIFinished);
   if (bridge.aiFailed) bridge.aiFailed.connect(onAIFailed);
+  if (bridge.scoresReady) bridge.scoresReady.connect(onScoresReady);
   bridge.pipelineProgress.connect(onPipelineProgress);
   boot();
 });
@@ -160,7 +163,7 @@ async function boot() {
     setAppLoading(true, "Failed to load application", String(error));
     throw error;
   } finally {
-    if (state.rows || state.view) setAppLoading(false);
+    if (!state.pendingReload && (state.rows || state.view)) setAppLoading(false);
   }
 }
 
@@ -403,7 +406,7 @@ function applyAIQueuePayload(data) {
   state.aiQueueLoaded = true;
 }
 
-function scheduleAIQueueRefresh(delayMs = 1200) {
+function scheduleAIQueueRefresh(delayMs = 3000) {
   if (!bridge || !bridge.loadAIQueue || aiQueueRefreshTimer) return;
   aiQueueRefreshTimer = setTimeout(async () => {
     aiQueueRefreshTimer = null;
@@ -498,6 +501,14 @@ function renderAIQueuePanel() {
   const aiRunning = isAIActive() || Boolean(state.aiBusy);
   const canStart = !aiRunning && state.aiQueue.length > 0;
   const canStop = aiRunning;
+  const sig = JSON.stringify({
+    currentText, aiRunning, canStart, canStop,
+    cur: state.aiCurrentListingId,
+    q: state.aiQueue.map((i) => [i.listingId, i.status]),
+    opts: state.aiAnalyzedOptions.map((i) => i.listingId),
+  });
+  if (sig === lastQueuePanelSig) return;
+  lastQueuePanelSig = sig;
   const items = state.aiQueue.length
     ? state.aiQueue.map((item, index) => queueItemHtml(item, index)).join("")
     : `<div class="queue-empty">${t("ai_queue.empty")}</div>`;
@@ -617,6 +628,13 @@ async function addAnalyzedToQueue() {
 /* ===================== Data load ===================== */
 async function reload() {
   if (state.view === "settings") { updateTopbar(); renderSettings(); return; }
+  const prep = await callJson("prepareProfile", state.profileKey);
+  if (prep && prep.ready === false) {
+    state.pendingReload = true;
+    setAppLoading(true, t("status.recalculating_scores"), t("status.loading_data"));
+    return;
+  }
+  state.pendingReload = false;
   const payload = JSON.stringify({
     tab: state.tab,
     profileKey: state.profileKey,
@@ -629,8 +647,16 @@ async function reload() {
   state.referencePoints = data.referencePoints || [];
   state.mapCoverage = data.mapCoverage || { visible: state.rows.length, geocoded: state.markers.length };
   state.summary = data.summary || {};
+  setAppLoading(false);
   updateTopbar();
   renderCurrent();
+}
+
+function onScoresReady(profileKey) {
+  if (profileKey === state.profileKey && state.pendingReload) {
+    state.pendingReload = false;
+    reload();
+  }
 }
 
 function renderCurrent() {
@@ -1492,7 +1518,7 @@ function applyPipelineStatus(status) {
 }
 function startSyncPolling() {
   stopSyncPolling();
-  syncPollTimer = setInterval(pollSyncStatus, 250);
+  syncPollTimer = setInterval(pollSyncStatus, 1000);
   pollSyncStatus();
 }
 function stopSyncPolling() {

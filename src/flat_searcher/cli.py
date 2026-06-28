@@ -409,7 +409,7 @@ def main(argv: Sequence[str] | None = None) -> int:
         init_database(config.database_path)
         result = GeocodingService(
             database_path=config.database_path,
-            geocoder=NominatimGeocoder(),
+            geocoder=NominatimGeocoder(user_agent=config.geocoder_user_agent),
         ).geocode_missing(limit=args.limit)
         print(f"Checked listings: {result.checked_count}")
         print(f"Geocoded listings: {result.geocoded_count}")
@@ -565,6 +565,7 @@ def _print_config(config: AppConfig) -> None:
     print(f"SS start URL: {config.ss_start_url}")
     print(f"Gemini model: {config.gemini_model}")
     print(f"Overpass endpoint: {config.overpass_endpoint}")
+    print(f"Geocoder user agent: {config.geocoder_user_agent}")
 
 
 def _configure_console_encoding(stream: TextIO) -> None:

@@ -26,7 +26,7 @@ class Geocoder(Protocol):
 class NominatimGeocoder:
     def __init__(
         self,
-        user_agent: str = "FlatSearcher/0.1 local desktop app",
+        user_agent: str = "flat-searcher/0.1 (Riga apartment analyzer)",
         endpoint: str = "https://nominatim.openstreetmap.org/search",
         timeout_seconds: float = 30.0,
         request_delay_seconds: float = 1.0,
