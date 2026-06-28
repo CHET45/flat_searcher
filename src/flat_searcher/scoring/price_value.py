@@ -45,7 +45,12 @@ class MarketBaseline:
 
 @dataclass(frozen=True)
 class PriceValueResult:
+    price_value_score: float | None
+    price_per_m2_score: float | None
     relative_market_score: float | None
+    price_per_effective_private_room: float | None
+    price_per_effective_private_room_score: float | None
+    absolute_price_score: float | None
     suspicious_low_price_flag: bool
     baseline: MarketBaseline | None
 
@@ -84,13 +89,35 @@ def calculate_price_value(
     price_per_m2 = target.price_per_m2
     if baseline is None or price_per_m2 is None:
         return PriceValueResult(
+            price_value_score=None,
+            price_per_m2_score=None,
             relative_market_score=None,
+            price_per_effective_private_room=_price_per_effective_private_room(target),
+            price_per_effective_private_room_score=None,
+            absolute_price_score=None,
             suspicious_low_price_flag=False,
             baseline=baseline,
         )
 
+    price_per_m2_score = relative_market_score(price_per_m2, baseline.median_price_per_m2)
+    private_room_price = _price_per_effective_private_room(target)
+    private_room_score = _private_room_value_score(target, listings)
+    absolute_score = _absolute_price_score(target, listings)
+    score_parts = [
+        (price_per_m2_score, 5),
+        (relative_market_score(price_per_m2, baseline.median_price_per_m2), 3),
+        (private_room_score, 2),
+        (absolute_score, 1),
+    ]
+    score_total = sum(score * weight for score, weight in score_parts if score is not None)
+    weight_total = sum(weight for score, weight in score_parts if score is not None)
     return PriceValueResult(
+        price_value_score=round(score_total / weight_total, 2) if weight_total else None,
+        price_per_m2_score=price_per_m2_score,
         relative_market_score=relative_market_score(price_per_m2, baseline.median_price_per_m2),
+        price_per_effective_private_room=private_room_price,
+        price_per_effective_private_room_score=private_room_score,
+        absolute_price_score=absolute_score,
         suspicious_low_price_flag=is_suspiciously_low_price(price_per_m2, baseline),
         baseline=baseline,
     )
@@ -115,6 +142,47 @@ def relative_market_score(price_per_m2: float, baseline_price_per_m2: float) -> 
 
 def is_suspiciously_low_price(price_per_m2: float, baseline: MarketBaseline) -> bool:
     return baseline.sample_size >= 5 and price_per_m2 < baseline.median_price_per_m2 * 0.65
+
+
+def _price_per_effective_private_room(item: MarketListing) -> float | None:
+    if item.price_eur is None or item.effective_private_rooms is None:
+        return None
+    if item.effective_private_rooms <= 0:
+        return None
+    return item.price_eur / item.effective_private_rooms
+
+
+def _private_room_value_score(
+    target: MarketListing,
+    listings: tuple[MarketListing, ...],
+) -> float | None:
+    target_value = _price_per_effective_private_room(target)
+    if target_value is None:
+        return None
+    values = [
+        value
+        for item in _normal_comparables(target, listings)
+        if (value := _price_per_effective_private_room(item)) is not None
+    ]
+    if len(values) < 3:
+        return None
+    return relative_market_score(target_value, float(median(values)))
+
+
+def _absolute_price_score(
+    target: MarketListing,
+    listings: tuple[MarketListing, ...],
+) -> float | None:
+    if target.price_eur is None:
+        return None
+    prices = [
+        item.price_eur
+        for item in _normal_comparables(target, listings)
+        if item.price_eur is not None and item.price_eur > 0
+    ]
+    if len(prices) < 3:
+        return None
+    return relative_market_score(float(target.price_eur), float(median(prices)))
 
 
 def _normal_comparables(

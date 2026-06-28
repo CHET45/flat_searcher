@@ -30,6 +30,8 @@ class ListingCandidate:
     wooden_building_risk: bool = False
     has_floor_plan: bool = False
     has_notes: bool = False
+    price_value_score: float | None = None
+    suspicious_low_price_flag: bool = False
     rtu_score: float | None = None
     transport_score: float | None = None
     station_score: float | None = None

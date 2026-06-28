@@ -68,6 +68,11 @@ def build_parser() -> argparse.ArgumentParser:
         help="Delay between HTTP requests in seconds.",
     )
     sync_parser.add_argument(
+        "--ss-start-url",
+        default=None,
+        help="Override the SS.com list URL used as the first page for this sync run.",
+    )
+    sync_parser.add_argument(
         "--mark-missing-inactive",
         action="store_true",
         help="Mark active listings missing from this run as inactive. Use only for full syncs.",
@@ -122,6 +127,12 @@ def build_parser() -> argparse.ArgumentParser:
         "--profile",
         default="for_living_mortgage",
         help="Scoring profile key.",
+    )
+    ui_parser.add_argument(
+        "--language",
+        choices=("en", "ru"),
+        default="en",
+        help="Initial desktop UI language.",
     )
 
     map_parser = subparsers.add_parser("show-map-markers", help="Print map marker JSON.")
@@ -299,6 +310,7 @@ def main(argv: Sequence[str] | None = None) -> int:
     args = parser.parse_args(argv)
 
     config = AppConfig.from_env(database_override=getattr(args, "database", None))
+    configure_logging(log_file=config.log_file)
 
     if args.command == "show-config":
         _print_config(config)
@@ -313,7 +325,7 @@ def main(argv: Sequence[str] | None = None) -> int:
     if args.command == "sync-listings":
         service = ListingSyncService(
             database_path=config.database_path,
-            start_url=config.ss_start_url,
+            start_url=args.ss_start_url or config.ss_start_url,
             http_client=HttpTextClient(request_delay_seconds=args.request_delay),
         )
         result = service.sync(
@@ -360,6 +372,9 @@ def main(argv: Sequence[str] | None = None) -> int:
         print(view_model.title)
         print(f"Original listing: {view_model.ss_url}")
         _print_section("Top", view_model.top_lines)
+        _print_section("Flags", view_model.flags_lines)
+        _print_section("Rating", view_model.rating_lines)
+        _print_section("Price value", view_model.price_value_lines)
         _print_section("Layout", view_model.layout_lines)
         _print_section("Mortgage", view_model.mortgage_lines)
         _print_section("Location", view_model.location_lines)
@@ -369,7 +384,12 @@ def main(argv: Sequence[str] | None = None) -> int:
     if args.command == "run-ui":
         try:
             return run_desktop_app(
-                DesktopUIConfig(database_path=config.database_path, profile_key=args.profile)
+                DesktopUIConfig(
+                    database_path=config.database_path,
+                    profile_key=args.profile,
+                    start_url=config.ss_start_url,
+                    language=args.language,
+                )
             )
         except UIDependencyError as error:
             print(str(error))
@@ -541,6 +561,7 @@ def _print_config(config: AppConfig) -> None:
     print(f"Cache dir: {config.cache_dir}")
     print(f"Temporary images dir: {config.temporary_images_dir}")
     print(f"Floor plans dir: {config.floor_plans_dir}")
+    print(f"Log file: {config.log_file}")
     print(f"SS start URL: {config.ss_start_url}")
     print(f"Gemini model: {config.gemini_model}")
     print(f"Overpass endpoint: {config.overpass_endpoint}")

@@ -2,13 +2,15 @@
 
 from __future__ import annotations
 
+import json
 from dataclasses import dataclass
 
 from flat_searcher.ai import LayoutConfidenceLabel, MortgageRiskLevel
 from flat_searcher.db.read_models import ListingDetailReadModel
 from flat_searcher.filtering import ListingCandidate
-from flat_searcher.presentation.titles import format_apartment_title
+from flat_searcher.presentation.titles import format_ai_room_label, format_apartment_title
 from flat_searcher.ranking import RankedCandidate
+from flat_searcher.scoring import BLOCK_LABELS, ScoreBlockKey
 
 
 @dataclass(frozen=True)
@@ -31,12 +33,16 @@ class DetailViewModel:
     listing_id: int
     title: str
     top_lines: tuple[str, ...]
+    flags_lines: tuple[str, ...]
+    rating_lines: tuple[str, ...]
+    price_value_lines: tuple[str, ...]
     layout_lines: tuple[str, ...]
     mortgage_lines: tuple[str, ...]
     location_lines: tuple[str, ...]
     history_lines: tuple[str, ...]
     original_listing_text: str
     ss_url: str
+    floor_plan_path: str | None = None
 
 
 def ranking_row_view_model(ranked: RankedCandidate) -> RankingRowViewModel:
@@ -76,6 +82,10 @@ def key_flags(candidate: ListingCandidate) -> tuple[str, ...]:
         flags.append("Floor plan")
     if candidate.kitchen_living_detected:
         flags.append("Kitchen-living")
+    if candidate.price_value_score is not None and candidate.price_value_score >= 80:
+        flags.append("Good price")
+    if candidate.suspicious_low_price_flag:
+        flags.append("Suspiciously low price - check carefully")
     if candidate.mortgage_risk_level in {
         MortgageRiskLevel.HIGH,
         MortgageRiskLevel.CRITICAL,
@@ -102,12 +112,16 @@ def detail_view_model(detail: ListingDetailReadModel) -> DetailViewModel:
         listing_id=detail.listing_id,
         title=title,
         top_lines=_top_lines(detail),
+        flags_lines=_flags_lines(detail),
+        rating_lines=_rating_lines(detail),
+        price_value_lines=_price_value_lines(detail),
         layout_lines=_layout_lines(detail),
         mortgage_lines=_mortgage_lines(detail),
         location_lines=_location_lines(detail),
         history_lines=_history_lines(detail),
         original_listing_text=detail.description_text or "",
         ss_url=detail.ss_url,
+        floor_plan_path=detail.floor_plan_path,
     )
 
 
@@ -134,7 +148,76 @@ def _top_lines(detail: ListingDetailReadModel) -> tuple[str, ...]:
         f"Building series: {detail.building_series or 'unknown'}",
         f"Building type: {detail.building_type or 'unknown'}",
         f"Listing date: {detail.listing_date_text or 'unknown'}",
-        f"Score: {_score_text(detail.overall_score)}",
+    )
+
+
+def _flags_lines(detail: ListingDetailReadModel) -> tuple[str, ...]:
+    flags: list[str] = []
+    if detail.is_favorite:
+        flags.append("Favorite")
+    if detail.is_rejected:
+        flags.append("Rejected")
+    if detail.listing_status == "inactive":
+        flags.append("Inactive")
+    if detail.ss_vs_ai_room_conflict:
+        flags.append("Room conflict")
+    if detail.layout_confidence_label == LayoutConfidenceLabel.UNCLEAR:
+        flags.append("Layout unclear")
+    if detail.has_floor_plan and detail.layout_confidence_label == LayoutConfidenceLabel.CONFIRMED:
+        flags.append("Layout confirmed by floor plan")
+    elif detail.has_floor_plan:
+        flags.append("Floor plan")
+    if detail.kitchen_living_detected:
+        flags.append("Kitchen-living is not counted as private room")
+    if detail.mortgage_risk_level in {MortgageRiskLevel.HIGH, MortgageRiskLevel.CRITICAL}:
+        flags.append("High mortgage risk")
+    if detail.stove_heating_risk:
+        flags.append("Stove heating risk")
+    if detail.wooden_building_risk:
+        flags.append("Wooden building risk")
+    if detail.suspicious_low_price_flag:
+        flags.append("Suspiciously low price - check carefully")
+    if detail.geo_scores_disabled_reason:
+        flags.append(detail.geo_scores_disabled_reason)
+    if detail.declared_rooms_ss is not None and detail.effective_private_rooms is not None:
+        flags.append(
+            "AI: "
+            f"{format_ai_room_label(detail.effective_private_rooms, detail.kitchen_living_detected)} "
+            f"/ SS: {detail.declared_rooms_ss}"
+        )
+    return tuple(flags) or ("No major flags",)
+
+
+def _rating_lines(detail: ListingDetailReadModel) -> tuple[str, ...]:
+    lines = [
+        f"Overall score: {_score_text(detail.overall_score)}",
+    ]
+    if detail.score_explanation:
+        lines.append(f"Explanation: {detail.score_explanation}")
+    breakdown = _score_breakdown_lines(detail.score_breakdown_json)
+    if breakdown:
+        lines.append("Breakdown:")
+        lines.extend(breakdown)
+    return tuple(lines)
+
+
+def _price_value_lines(detail: ListingDetailReadModel) -> tuple[str, ...]:
+    return (
+        f"Price value score: {_score_text(detail.price_value_score)}",
+        f"Price per m2 score: {_score_text(detail.price_per_m2_score)}",
+        f"Relative market score: {_score_text(detail.relative_market_score)}",
+        "Price per effective private room: "
+        f"{_money_text(detail.price_per_effective_private_room)}",
+        "Private room value score: "
+        f"{_score_text(detail.price_per_effective_private_room_score)}",
+        f"Absolute price score: {_score_text(detail.absolute_price_score)}",
+        "Suspiciously low price: "
+        f"{_yes_no(detail.suspicious_low_price_flag)}",
+        f"Baseline level: {detail.market_baseline_level_used or 'unknown'}",
+        f"Baseline sample size: {_optional_count(detail.market_baseline_sample_size)}",
+        "Baseline median EUR/m2: "
+        f"{_price_per_m2_text(detail.market_baseline_median_price_per_m2)}",
+        f"Baseline explanation: {detail.market_baseline_explanation or 'not calculated yet'}",
     )
 
 
@@ -194,10 +277,48 @@ def _history_lines(detail: ListingDetailReadModel) -> tuple[str, ...]:
     if detail.history_snapshots:
         latest = detail.history_snapshots[0]
         lines.append(f"Last checked: {latest.checked_at}")
+        lines.append(f"Latest price: {_price_text(latest.price_eur)}")
+        lines.append(f"Latest unique visits: {_optional_count(latest.unique_visits)}")
+        lines.append(f"Latest image count: {_optional_count(latest.images_count)}")
+        lines.append(f"Latest active status: {_yes_no(latest.is_active)}")
     if detail.change_events:
         latest_event = detail.change_events[0]
-        lines.append(f"Latest event: {latest_event.event_type}")
+        event_value = latest_event.event_type
+        if latest_event.old_value is not None or latest_event.new_value is not None:
+            event_value += f" ({latest_event.old_value} -> {latest_event.new_value})"
+        lines.append(f"Latest event: {event_value}")
     return tuple(lines)
+
+
+def _score_breakdown_lines(score_breakdown_json: str | None) -> tuple[str, ...]:
+    if not score_breakdown_json:
+        return ()
+    try:
+        raw = json.loads(score_breakdown_json)
+    except json.JSONDecodeError:
+        return ()
+    if not isinstance(raw, dict):
+        return ()
+    lines: list[str] = []
+    for key, value in raw.items():
+        if not isinstance(value, dict):
+            continue
+        score = value.get("score")
+        explanation = value.get("explanation")
+        label = _block_label(str(key))
+        score_text = _score_text(float(score)) if isinstance(score, int | float) else "unknown"
+        if isinstance(explanation, str) and explanation:
+            lines.append(f"{label}: {score_text} - {explanation}")
+        else:
+            lines.append(f"{label}: {score_text}")
+    return tuple(lines)
+
+
+def _block_label(raw_key: str) -> str:
+    try:
+        return BLOCK_LABELS[ScoreBlockKey(raw_key)]
+    except (KeyError, ValueError):
+        return raw_key.replace("_", " ").title()
 
 
 def _layout_text(candidate: ListingCandidate) -> str:
@@ -215,6 +336,12 @@ def _price_text(price_eur: int | None) -> str:
     if price_eur is None:
         return "unknown"
     return f"{price_eur:,}".replace(",", " ") + " EUR"
+
+
+def _money_text(value: float | None) -> str:
+    if value is None:
+        return "unknown"
+    return f"{value:,.0f}".replace(",", " ") + " EUR"
 
 
 def _derive_price_per_m2(price_eur: int | None, area_m2: float | None) -> float | None:

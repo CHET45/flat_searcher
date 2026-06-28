@@ -25,8 +25,11 @@ def init_database(database_path: Path) -> DatabaseInitResult:
 
     schema_sql = SCHEMA_PATH.read_text(encoding="utf-8")
 
-    connection = sqlite3.connect(database_path)
+    connection = sqlite3.connect(database_path, timeout=30.0)
     try:
+        connection.execute("PRAGMA busy_timeout = 30000")
+        connection.execute("PRAGMA journal_mode = WAL")
+        connection.execute("PRAGMA synchronous = NORMAL")
         connection.execute("PRAGMA foreign_keys = ON")
         connection.executescript(schema_sql)
         apply_migrations(connection)

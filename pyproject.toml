@@ -29,6 +29,18 @@ flat-searcher = "flat_searcher.cli:main"
 [tool.setuptools.packages.find]
 where = ["src"]
 
+[tool.setuptools.package-data]
+flat_searcher = [
+    "ui/web/*.html",
+    "ui/web/*.css",
+    "ui/web/*.js",
+    "ui/web/vendor/*.css",
+    "ui/web/vendor/leaflet/*",
+    "ui/web/vendor/leaflet/images/*",
+    "ui/web/vendor/markercluster/*",
+    "ui/web/vendor/fonts/*",
+]
+
 [tool.ruff]
 line-length = 100
 target-version = "py312"

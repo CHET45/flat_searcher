@@ -19,6 +19,7 @@ class AppConfig:
     cache_dir: Path
     temporary_images_dir: Path
     floor_plans_dir: Path
+    log_file: Path
     ss_start_url: str = DEFAULT_SS_START_URL
     gemini_api_key: str | None = None
     gemini_model: str = DEFAULT_GEMINI_MODEL
@@ -30,7 +31,7 @@ class AppConfig:
             Path(os.environ.get("FLAT_SEARCHER_ENV_FILE") or ".env").expanduser()
         )
         app_home = Path(
-            os.environ.get("FLAT_SEARCHER_HOME") or Path.home() / ".flat_searcher"
+            os.environ.get("FLAT_SEARCHER_HOME") or _user_home() / ".flat_searcher"
         ).expanduser()
 
         database_from_env = os.environ.get("FLAT_SEARCHER_DB_PATH")
@@ -44,12 +45,16 @@ class AppConfig:
         temporary_images_dir = cache_dir / "tmp_images"
         floor_plans_dir = cache_dir / "floor_plans"
 
+        log_file = app_home / "logs" / "flat_searcher.log"
+
         return cls(
             app_home=app_home,
             database_path=database_path,
             cache_dir=cache_dir,
             temporary_images_dir=temporary_images_dir,
             floor_plans_dir=floor_plans_dir,
+            log_file=log_file,
+            ss_start_url=os.environ.get("FLAT_SEARCHER_SS_START_URL") or DEFAULT_SS_START_URL,
             gemini_api_key=os.environ.get("GEMINI_API_KEY") or None,
             gemini_model=os.environ.get("GEMINI_MODEL") or DEFAULT_GEMINI_MODEL,
             overpass_endpoint=(
@@ -62,7 +67,21 @@ class AppConfig:
         self.cache_dir.mkdir(parents=True, exist_ok=True)
         self.temporary_images_dir.mkdir(parents=True, exist_ok=True)
         self.floor_plans_dir.mkdir(parents=True, exist_ok=True)
+        self.log_file.parent.mkdir(parents=True, exist_ok=True)
         self.database_path.parent.mkdir(parents=True, exist_ok=True)
+
+
+def _user_home() -> Path:
+    try:
+        return Path.home()
+    except RuntimeError:
+        fallback = (
+            os.environ.get("LOCALAPPDATA")
+            or os.environ.get("APPDATA")
+            or os.environ.get("TEMP")
+            or os.getcwd()
+        )
+        return Path(fallback)
 
 
 def _load_environment_file(path: Path) -> None:

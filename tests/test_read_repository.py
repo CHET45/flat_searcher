@@ -17,18 +17,23 @@ class ListingReadRepositoryTests(TestCase):
 
             with open_database(database_path) as connection:
                 listing_id = _seed_listing_with_analysis(connection)
+                no_plan_listing_id = _seed_listing_with_empty_floor_plan_ids(connection)
                 read_repository = ListingReadRepository(connection)
 
                 candidates = read_repository.load_candidates("for_living_mortgage")
                 detail = read_repository.load_detail(listing_id, "for_living_mortgage")
 
-                self.assertEqual(len(candidates), 1)
-                self.assertEqual(candidates[0].listing_id, listing_id)
-                self.assertEqual(candidates[0].score, 82.5)
-                self.assertEqual(candidates[0].effective_private_rooms, 2)
-                self.assertEqual(candidates[0].layout_confidence_label, LayoutConfidenceLabel.CONFIRMED)
-                self.assertEqual(candidates[0].mortgage_risk_level, MortgageRiskLevel.LOW)
-                self.assertTrue(candidates[0].has_floor_plan)
+                self.assertEqual(len(candidates), 2)
+                candidate = next(item for item in candidates if item.listing_id == listing_id)
+                no_plan_candidate = next(
+                    item for item in candidates if item.listing_id == no_plan_listing_id
+                )
+                self.assertEqual(candidate.score, 82.5)
+                self.assertEqual(candidate.effective_private_rooms, 2)
+                self.assertEqual(candidate.layout_confidence_label, LayoutConfidenceLabel.CONFIRMED)
+                self.assertEqual(candidate.mortgage_risk_level, MortgageRiskLevel.LOW)
+                self.assertTrue(candidate.has_floor_plan)
+                self.assertFalse(no_plan_candidate.has_floor_plan)
 
                 self.assertIsNotNone(detail)
                 self.assertEqual(detail.overall_score, 82.5)
@@ -124,6 +129,45 @@ def _seed_listing_with_analysis(connection) -> int:
             score_explanation, calculated_at
         )
         VALUES (?, 'for_living_mortgage', 82.5, '{}', 'Test score.', '2026-06-17T12:15:00+00:00')
+        """,
+        (listing_id,),
+    )
+    return listing_id
+
+
+def _seed_listing_with_empty_floor_plan_ids(connection) -> int:
+    repository = ListingRepository(connection)
+    run_id = repository.create_app_run("test", "2026-06-17T13:00:00+00:00")
+    result = repository.upsert_listing(
+        ListingPayload(
+            ss_id="test-no-plan",
+            ss_url="https://www.ss.com/msg/test-no-plan.html",
+            district="Teika",
+            street="Brivibas",
+            house_number="1",
+            price_eur=100_000,
+            area_m2=50,
+            declared_rooms_ss=2,
+            description_text="Original listing text.",
+            image_urls=("https://i.ss.com/gallery/no-plan.jpg",),
+            raw_html="<html>test</html>",
+        ),
+        app_run_id=run_id,
+        checked_at="2026-06-17T13:00:01+00:00",
+    )
+    listing_id = result.listing_id
+    connection.execute(
+        """
+        INSERT INTO ai_analyses (
+            listing_id, analysis_version, status, analyzed_at,
+            effective_private_rooms, walkthrough_rooms, kitchen_living_detected,
+            layout_confidence_label, ss_vs_ai_room_conflict, layout_explanation_user,
+            floor_plan_image_ids, mortgage_risk_level, mortgage_risk_reasons,
+            mortgage_explanation_user, stove_heating_risk, wooden_building_risk
+        )
+        VALUES (?, 'test-v1', 'finished', '2026-06-17T13:05:00+00:00',
+                2, 0, 0, 'Likely', 0, 'No floor plan was found.',
+                '[]', 'Low', '[]', 'No major mortgage risk detected.', 0, 0)
         """,
         (listing_id,),
     )

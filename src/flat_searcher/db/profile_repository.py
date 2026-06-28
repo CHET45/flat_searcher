@@ -116,6 +116,19 @@ class ProfileRepository:
             (profile_key,),
         )
 
+    def rename_profile(self, profile_key: str, profile_name: str) -> bool:
+        """Rename a custom profile and leave built-in presets untouched."""
+
+        result = self.connection.execute(
+            """
+            UPDATE scoring_profiles
+            SET profile_name = ?, updated_at = CURRENT_TIMESTAMP
+            WHERE profile_key = ? AND is_builtin = 0
+            """,
+            (profile_name, profile_key),
+        )
+        return result.rowcount > 0
+
 
 def _profile_from_row(row: sqlite3.Row) -> ScoringProfile:
     weights: dict[str, str] = json.loads(row["block_weights_json"] or "{}")

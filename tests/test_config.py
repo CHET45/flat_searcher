@@ -42,3 +42,13 @@ class AppConfigTests(TestCase):
                 config.overpass_endpoint,
                 "https://file-overpass.test/api",
             )
+
+    def test_from_env_loads_ss_start_url_override(self) -> None:
+        with patch.dict(
+            os.environ,
+            {"FLAT_SEARCHER_SS_START_URL": "https://www.ss.com/lv/custom/"},
+            clear=True,
+        ):
+            config = AppConfig.from_env()
+
+        self.assertEqual(config.ss_start_url, "https://www.ss.com/lv/custom/")

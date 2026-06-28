@@ -15,7 +15,7 @@ from flat_searcher.db.read_models import (
 )
 from flat_searcher.filtering import ListingCandidate
 from flat_searcher.geo import AddressPrecision
-from flat_searcher.mapping import MapApartmentPoint
+from flat_searcher.mapping import MapApartmentPoint, MapReferencePoint
 
 
 class ListingReadRepository:
@@ -54,17 +54,21 @@ class ListingReadRepository:
                         FROM listing_images li
                         WHERE li.listing_id = l.id AND li.is_floor_plan = 1
                     ) THEN 1
-                    WHEN a.floor_plan_image_ids IS NOT NULL AND a.floor_plan_image_ids != '' THEN 1
+                    WHEN a.floor_plan_image_ids IS NOT NULL
+                         AND a.floor_plan_image_ids NOT IN ('', '[]') THEN 1
                     ELSE 0
                 END AS has_floor_plan,
                 ls.rtu_score,
                 ls.transport_score,
                 ls.station_score,
+                pva.price_value_score,
+                COALESCE(pva.suspicious_low_price_flag, 0) AS suspicious_low_price_flag,
                 sr.overall_score
             FROM listings l
             LEFT JOIN user_listing_states u ON u.listing_id = l.id
             LEFT JOIN latest_ai_analyses a ON a.listing_id = l.id
             LEFT JOIN location_scores ls ON ls.listing_id = l.id
+            LEFT JOIN price_value_analyses pva ON pva.listing_id = l.id
             LEFT JOIN score_results sr ON sr.listing_id = l.id AND sr.profile_key = ?
             ORDER BY l.id
             """,
@@ -94,6 +98,35 @@ class ListingReadRepository:
         ).fetchall()
         return tuple(_map_point_from_row(row) for row in rows)
 
+    def load_grocery_reference_points(
+        self,
+        listing_ids: frozenset[int],
+    ) -> tuple[MapReferencePoint, ...]:
+        if not listing_ids:
+            return ()
+        placeholders = ",".join("?" for _ in listing_ids)
+        rows = self.connection.execute(
+            f"""
+            SELECT DISTINCT p.id, p.name, p.latitude, p.longitude
+            FROM osm_pois p
+            JOIN osm_listing_pois lp ON lp.poi_id = p.id
+            WHERE p.category = 'grocery_shop'
+              AND lp.listing_id IN ({placeholders})
+            ORDER BY p.name, p.id
+            """,
+            tuple(sorted(listing_ids)),
+        ).fetchall()
+        return tuple(
+            MapReferencePoint(
+                point_id=f"grocery-{row['id']}",
+                latitude=row["latitude"],
+                longitude=row["longitude"],
+                kind="grocery",
+                title=row["name"] or "Grocery store",
+            )
+            for row in rows
+        )
+
     def load_detail(self, listing_id: int, profile_key: str) -> ListingDetailReadModel | None:
         row = self.connection.execute(
             """
@@ -107,11 +140,34 @@ class ListingReadRepository:
                 a.effective_private_rooms,
                 a.walkthrough_rooms,
                 a.kitchen_living_detected,
+                a.ss_vs_ai_room_conflict,
                 a.layout_confidence_label,
                 a.layout_explanation_user,
+                a.stove_heating_risk,
+                a.wooden_building_risk,
                 a.mortgage_risk_level,
                 a.mortgage_risk_reasons,
                 a.mortgage_explanation_user,
+                CASE
+                    WHEN EXISTS (
+                        SELECT 1
+                        FROM listing_images li
+                        WHERE li.listing_id = l.id AND li.is_floor_plan = 1
+                    ) THEN 1
+                    WHEN a.floor_plan_image_ids IS NOT NULL
+                         AND a.floor_plan_image_ids NOT IN ('', '[]') THEN 1
+                    ELSE 0
+                END AS has_floor_plan,
+                (
+                    SELECT li.local_floor_plan_path
+                    FROM listing_images li
+                    WHERE li.listing_id = l.id
+                      AND li.is_floor_plan = 1
+                      AND li.local_floor_plan_path IS NOT NULL
+                      AND li.local_floor_plan_path != ''
+                    ORDER BY li.id
+                    LIMIT 1
+                ) AS floor_plan_path,
                 g.latitude,
                 g.longitude,
                 g.geocode_precision,
@@ -131,12 +187,26 @@ class ListingReadRepository:
                 ls.transport_stops_nearby_count,
                 ls.transport_score,
                 ls.explanation AS location_explanation,
-                sr.overall_score
+                sr.overall_score,
+                sr.score_breakdown_json,
+                sr.score_explanation,
+                pva.price_value_score,
+                pva.price_per_m2_score,
+                pva.relative_market_score,
+                pva.price_per_effective_private_room,
+                pva.price_per_effective_private_room_score,
+                pva.absolute_price_score,
+                COALESCE(pva.suspicious_low_price_flag, 0) AS suspicious_low_price_flag,
+                pva.market_baseline_level_used,
+                pva.market_baseline_sample_size,
+                pva.market_baseline_median_price_per_m2,
+                pva.market_baseline_explanation
             FROM listings l
             LEFT JOIN user_listing_states u ON u.listing_id = l.id
             LEFT JOIN latest_ai_analyses a ON a.listing_id = l.id
             LEFT JOIN geocoding_results g ON g.listing_id = l.id
             LEFT JOIN location_scores ls ON ls.listing_id = l.id
+            LEFT JOIN price_value_analyses pva ON pva.listing_id = l.id
             LEFT JOIN score_results sr ON sr.listing_id = l.id AND sr.profile_key = ?
             WHERE l.id = ?
             """,
@@ -220,6 +290,8 @@ def _candidate_from_row(row: sqlite3.Row) -> ListingCandidate:
         wooden_building_risk=bool(row["wooden_building_risk"]),
         has_floor_plan=bool(row["has_floor_plan"]),
         has_notes=bool(row["has_notes"]),
+        price_value_score=row["price_value_score"],
+        suspicious_low_price_flag=bool(row["suspicious_low_price_flag"]),
         rtu_score=row["rtu_score"],
         transport_score=row["transport_score"],
         station_score=row["station_score"],
@@ -273,11 +345,16 @@ def _detail_from_row(
         effective_private_rooms=row["effective_private_rooms"],
         walkthrough_rooms=row["walkthrough_rooms"],
         kitchen_living_detected=bool(row["kitchen_living_detected"]),
+        ss_vs_ai_room_conflict=bool(row["ss_vs_ai_room_conflict"]),
         layout_confidence_label=parse_layout_confidence(row["layout_confidence_label"]),
         layout_explanation_user=row["layout_explanation_user"],
+        stove_heating_risk=bool(row["stove_heating_risk"]),
+        wooden_building_risk=bool(row["wooden_building_risk"]),
         mortgage_risk_level=parse_mortgage_risk(row["mortgage_risk_level"]),
         mortgage_risk_reasons=row["mortgage_risk_reasons"],
         mortgage_explanation_user=row["mortgage_explanation_user"],
+        has_floor_plan=bool(row["has_floor_plan"]),
+        floor_plan_path=row["floor_plan_path"],
         latitude=row["latitude"],
         longitude=row["longitude"],
         geocode_precision=parse_address_precision(row["geocode_precision"]),
@@ -300,6 +377,21 @@ def _detail_from_row(
         transport_score=row["transport_score"],
         location_explanation=row["location_explanation"],
         overall_score=row["overall_score"],
+        score_breakdown_json=row["score_breakdown_json"],
+        score_explanation=row["score_explanation"],
+        price_value_score=row["price_value_score"],
+        price_per_m2_score=row["price_per_m2_score"],
+        relative_market_score=row["relative_market_score"],
+        price_per_effective_private_room=row["price_per_effective_private_room"],
+        price_per_effective_private_room_score=(
+            row["price_per_effective_private_room_score"]
+        ),
+        absolute_price_score=row["absolute_price_score"],
+        suspicious_low_price_flag=bool(row["suspicious_low_price_flag"]),
+        market_baseline_level_used=row["market_baseline_level_used"],
+        market_baseline_sample_size=row["market_baseline_sample_size"],
+        market_baseline_median_price_per_m2=row["market_baseline_median_price_per_m2"],
+        market_baseline_explanation=row["market_baseline_explanation"],
         history_snapshots=history_snapshots,
         change_events=change_events,
     )

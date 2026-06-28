@@ -126,6 +126,10 @@ class ProfileRepositoryTests(TestCase):
 
             with open_database(database_path) as connection:
                 repository = ProfileRepository(connection)
+                self.assertTrue(repository.rename_profile("custom_quiet", "Quiet and green"))
+                renamed = repository.load_profile("custom_quiet")
+                self.assertIsNotNone(renamed)
+                self.assertEqual(renamed.name, "Quiet and green")
                 repository.delete_profile("custom_quiet")
                 self.assertIsNone(repository.load_profile("custom_quiet"))
 

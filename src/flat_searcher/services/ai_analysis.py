@@ -6,7 +6,7 @@ import json
 from dataclasses import dataclass, field
 from datetime import UTC, datetime
 from pathlib import Path
-from typing import Protocol
+from typing import Callable, Protocol
 
 from flat_searcher.ai import (
     AIValidationError,
@@ -24,6 +24,7 @@ class AIAnalysisRunResult:
     checked_count: int
     analyzed_count: int
     failed_count: int
+    cancelled: bool = False
 
 
 @dataclass(frozen=True)
@@ -90,6 +91,8 @@ class AIAnalysisService:
         listing_id: int | None = None,
         limit: int | None = None,
         force: bool = False,
+        progress_callback: Callable[[ListingForAnalysis, int, int], None] | None = None,
+        should_cancel: Callable[[], bool] | None = None,
     ) -> AIAnalysisRunResult:
         with open_database(self.database_path) as connection:
             repository = AIAnalysisRepository(connection)
@@ -98,36 +101,94 @@ class AIAnalysisService:
                 limit=limit,
                 force=force,
             )
-            analyzed_count = 0
-            failed_count = 0
-            for listing in listings:
-                try:
-                    analysis = self.provider.analyze(listing)
-                    _validate_provider_result(listing, analysis)
-                    repository.save_finished_analysis(
-                        listing_id=listing.listing_id,
-                        analysis_version=analysis_version,
-                        analyzed_at=_now(),
-                        pass1_raw_json=analysis.pass1_raw,
-                        pass1_analysis=analysis.pass1_analysis,
-                        pass2_raw_json=analysis.pass2_raw,
-                        pass2_analysis=analysis.pass2_analysis,
-                        image_content_hashes=analysis.image_content_hashes,
-                        floor_plan_paths=analysis.floor_plan_paths,
-                    )
-                    analyzed_count += 1
-                except Exception as error:
-                    repository.save_failed_analysis(
-                        listing_id=listing.listing_id,
-                        analysis_version=analysis_version,
-                        error_message=str(error),
-                    )
-                    failed_count += 1
-            return AIAnalysisRunResult(
-                checked_count=len(listings),
-                analyzed_count=analyzed_count,
-                failed_count=failed_count,
+            return self._analyze_listings(
+                repository,
+                listings,
+                analysis_version,
+                progress_callback,
+                should_cancel,
             )
+
+    def analyze_ordered(
+        self,
+        analysis_version: str,
+        listing_ids: tuple[int, ...],
+        force_listing_ids: frozenset[int] = frozenset(),
+        progress_callback: Callable[[ListingForAnalysis, int, int], None] | None = None,
+        should_cancel: Callable[[], bool] | None = None,
+    ) -> AIAnalysisRunResult:
+        with open_database(self.database_path) as connection:
+            repository = AIAnalysisRepository(connection)
+            listings: list[ListingForAnalysis] = []
+            seen: set[int] = set()
+            for listing_id in listing_ids:
+                if listing_id in seen:
+                    continue
+                seen.add(listing_id)
+                loaded = repository.load_pending_listings(
+                    listing_id=listing_id,
+                    limit=1,
+                    force=listing_id in force_listing_ids,
+                )
+                listings.extend(loaded)
+            return self._analyze_listings(
+                repository,
+                tuple(listings),
+                analysis_version,
+                progress_callback,
+                should_cancel,
+            )
+
+    def _analyze_listings(
+        self,
+        repository: AIAnalysisRepository,
+        listings: tuple[ListingForAnalysis, ...],
+        analysis_version: str,
+        progress_callback: Callable[[ListingForAnalysis, int, int], None] | None,
+        should_cancel: Callable[[], bool] | None = None,
+    ) -> AIAnalysisRunResult:
+        analyzed_count = 0
+        failed_count = 0
+        checked_count = 0
+        cancelled = False
+        total_count = len(listings)
+        for index, listing in enumerate(listings, start=1):
+            if should_cancel is not None and should_cancel():
+                cancelled = True
+                break
+            if progress_callback is not None:
+                progress_callback(listing, index, total_count)
+            try:
+                analysis = self.provider.analyze(listing)
+                _validate_provider_result(listing, analysis)
+                repository.save_finished_analysis(
+                    listing_id=listing.listing_id,
+                    analysis_version=analysis_version,
+                    analyzed_at=_now(),
+                    pass1_raw_json=analysis.pass1_raw,
+                    pass1_analysis=analysis.pass1_analysis,
+                    pass2_raw_json=analysis.pass2_raw,
+                    pass2_analysis=analysis.pass2_analysis,
+                    image_content_hashes=analysis.image_content_hashes,
+                    floor_plan_paths=analysis.floor_plan_paths,
+                )
+                repository.connection.commit()
+                analyzed_count += 1
+            except Exception as error:
+                repository.save_failed_analysis(
+                    listing_id=listing.listing_id,
+                    analysis_version=analysis_version,
+                    error_message=str(error),
+                )
+                repository.connection.commit()
+                failed_count += 1
+            checked_count += 1
+        return AIAnalysisRunResult(
+            checked_count=checked_count,
+            analyzed_count=analyzed_count,
+            failed_count=failed_count,
+            cancelled=cancelled,
+        )
 
 
 def _mock_pass1_payload(listing: ListingForAnalysis) -> dict[str, object]:
@@ -151,8 +212,7 @@ def _mock_pass1_payload(listing: ListingForAnalysis) -> dict[str, object]:
         "ignored_images": [],
         "duplicate_images": [],
         "image_groups_by_room": {
-            image["likely_room_group"]: [image["image_id"]]
-            for image in images
+            image["likely_room_group"]: [image["image_id"]] for image in images
         },
     }
 
@@ -162,16 +222,11 @@ def _validate_provider_result(
     analysis: AIProviderResult,
 ) -> None:
     expected = tuple(str(image_id) for image_id in listing.image_ids)
-    classified = tuple(
-        image.image_id for image in analysis.pass1_analysis.images
-    )
+    classified = tuple(image.image_id for image in analysis.pass1_analysis.images)
     if len(classified) != len(expected) or set(classified) != set(expected):
-        raise AIValidationError(
-            "Pass 1 must classify every listing image exactly once."
-        )
+        raise AIValidationError("Pass 1 must classify every listing image exactly once.")
     referenced_floor_plans = (
-        analysis.pass1_analysis.floor_plan_image_ids
-        + analysis.pass2_analysis.floor_plan_image_ids
+        analysis.pass1_analysis.floor_plan_image_ids + analysis.pass2_analysis.floor_plan_image_ids
     )
     unknown_floor_plans = set(referenced_floor_plans) - set(expected)
     if unknown_floor_plans:
@@ -182,9 +237,7 @@ def _validate_provider_result(
     unexpected_hash_ids = set(analysis.image_content_hashes) - set(listing.image_ids)
     unexpected_path_ids = set(analysis.floor_plan_paths) - set(listing.image_ids)
     if unexpected_hash_ids or unexpected_path_ids:
-        raise AIValidationError(
-            "AI provider returned download metadata for another listing."
-        )
+        raise AIValidationError("AI provider returned download metadata for another listing.")
 
 
 def _mock_pass2_payload(listing: ListingForAnalysis) -> dict[str, object]:

@@ -198,6 +198,22 @@ CREATE TABLE IF NOT EXISTS location_scores (
 CREATE UNIQUE INDEX IF NOT EXISTS idx_location_scores_listing
 ON location_scores (listing_id);
 
+CREATE TABLE IF NOT EXISTS price_value_analyses (
+    listing_id INTEGER PRIMARY KEY REFERENCES listings(id) ON DELETE CASCADE,
+    price_value_score REAL,
+    price_per_m2_score REAL,
+    relative_market_score REAL,
+    price_per_effective_private_room REAL,
+    price_per_effective_private_room_score REAL,
+    absolute_price_score REAL,
+    suspicious_low_price_flag INTEGER NOT NULL DEFAULT 0,
+    market_baseline_level_used TEXT,
+    market_baseline_sample_size INTEGER,
+    market_baseline_median_price_per_m2 REAL,
+    market_baseline_explanation TEXT,
+    calculated_at TEXT NOT NULL
+);
+
 CREATE TABLE IF NOT EXISTS osm_pois (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
     osm_element_type TEXT NOT NULL,

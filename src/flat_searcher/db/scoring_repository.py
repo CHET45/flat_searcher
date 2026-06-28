@@ -7,7 +7,7 @@ import sqlite3
 from dataclasses import dataclass
 
 from flat_searcher.ai import LayoutConfidenceLabel, MortgageRiskLevel
-from flat_searcher.scoring import ScoreResult
+from flat_searcher.scoring import PriceValueResult, ScoreResult
 
 
 @dataclass(frozen=True)
@@ -86,6 +86,58 @@ class ScoringRepository:
                 result.overall_score,
                 json.dumps(breakdown, ensure_ascii=False, sort_keys=True),
                 result.explanation,
+                calculated_at,
+            ),
+        )
+
+    def save_price_value_result(
+        self,
+        listing_id: int,
+        result: PriceValueResult,
+        calculated_at: str,
+    ) -> None:
+        baseline = result.baseline
+        self.connection.execute(
+            """
+            INSERT INTO price_value_analyses (
+                listing_id, price_value_score, price_per_m2_score,
+                relative_market_score, price_per_effective_private_room,
+                price_per_effective_private_room_score, absolute_price_score,
+                suspicious_low_price_flag, market_baseline_level_used,
+                market_baseline_sample_size, market_baseline_median_price_per_m2,
+                market_baseline_explanation, calculated_at
+            )
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            ON CONFLICT(listing_id) DO UPDATE SET
+                price_value_score = excluded.price_value_score,
+                price_per_m2_score = excluded.price_per_m2_score,
+                relative_market_score = excluded.relative_market_score,
+                price_per_effective_private_room =
+                    excluded.price_per_effective_private_room,
+                price_per_effective_private_room_score =
+                    excluded.price_per_effective_private_room_score,
+                absolute_price_score = excluded.absolute_price_score,
+                suspicious_low_price_flag = excluded.suspicious_low_price_flag,
+                market_baseline_level_used = excluded.market_baseline_level_used,
+                market_baseline_sample_size = excluded.market_baseline_sample_size,
+                market_baseline_median_price_per_m2 =
+                    excluded.market_baseline_median_price_per_m2,
+                market_baseline_explanation = excluded.market_baseline_explanation,
+                calculated_at = excluded.calculated_at
+            """,
+            (
+                listing_id,
+                result.price_value_score,
+                result.price_per_m2_score,
+                result.relative_market_score,
+                result.price_per_effective_private_room,
+                result.price_per_effective_private_room_score,
+                result.absolute_price_score,
+                1 if result.suspicious_low_price_flag else 0,
+                None if baseline is None else baseline.level.value,
+                None if baseline is None else baseline.sample_size,
+                None if baseline is None else baseline.median_price_per_m2,
+                None if baseline is None else baseline.explanation,
                 calculated_at,
             ),
         )

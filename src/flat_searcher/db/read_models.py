@@ -60,11 +60,16 @@ class ListingDetailReadModel:
     effective_private_rooms: int | None
     walkthrough_rooms: int | None
     kitchen_living_detected: bool
+    ss_vs_ai_room_conflict: bool
     layout_confidence_label: LayoutConfidenceLabel | None
     layout_explanation_user: str | None
+    stove_heating_risk: bool
+    wooden_building_risk: bool
     mortgage_risk_level: MortgageRiskLevel | None
     mortgage_risk_reasons: str | None
     mortgage_explanation_user: str | None
+    has_floor_plan: bool
+    floor_plan_path: str | None
 
     latitude: float | None
     longitude: float | None
@@ -88,6 +93,19 @@ class ListingDetailReadModel:
     location_explanation: str | None
 
     overall_score: float | None
+    score_breakdown_json: str | None
+    score_explanation: str | None
+    price_value_score: float | None
+    price_per_m2_score: float | None
+    relative_market_score: float | None
+    price_per_effective_private_room: float | None
+    price_per_effective_private_room_score: float | None
+    absolute_price_score: float | None
+    suspicious_low_price_flag: bool
+    market_baseline_level_used: str | None
+    market_baseline_sample_size: int | None
+    market_baseline_median_price_per_m2: float | None
+    market_baseline_explanation: str | None
     history_snapshots: tuple[ListingHistorySnapshot, ...]
     change_events: tuple[ListingChangeEvent, ...]
 

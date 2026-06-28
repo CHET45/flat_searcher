@@ -30,6 +30,15 @@ class InvalidImageReferenceProvider:
         )
 
 
+class RecordingProvider:
+    def __init__(self) -> None:
+        self.seen_ids: list[int] = []
+
+    def analyze(self, listing: ListingForAnalysis) -> AIProviderResult:
+        self.seen_ids.append(listing.listing_id)
+        return MockAIAnalysisProvider().analyze(listing)
+
+
 class AIAnalysisServiceTests(TestCase):
     def test_mock_analysis_is_validated_and_persisted(self) -> None:
         with tempfile.TemporaryDirectory() as temp_dir:
@@ -39,10 +48,16 @@ class AIAnalysisServiceTests(TestCase):
             with open_database(database_path) as connection:
                 listing_id = _insert_listing(connection)
 
+            progress_events = []
             result = AIAnalysisService(
                 database_path=database_path,
                 provider=MockAIAnalysisProvider(),
-            ).analyze_pending(analysis_version="mock-test-v1")
+            ).analyze_pending(
+                analysis_version="mock-test-v1",
+                progress_callback=lambda listing, current, total: progress_events.append(
+                    (listing.listing_id, listing.district, current, total)
+                ),
+            )
 
             with open_database(database_path) as connection:
                 detail = ListingReadRepository(connection).load_detail(
@@ -70,6 +85,7 @@ class AIAnalysisServiceTests(TestCase):
             self.assertEqual(result.checked_count, 1)
             self.assertEqual(result.analyzed_count, 1)
             self.assertEqual(result.failed_count, 0)
+            self.assertEqual(progress_events, [(listing_id, "Teika", 1, 1)])
             self.assertEqual(analysis_row["status"], "finished")
             self.assertEqual(analysis_row["analysis_version"], "mock-test-v1")
             self.assertEqual(analysis_row["effective_private_rooms"], 2)
@@ -156,14 +172,76 @@ class AIAnalysisServiceTests(TestCase):
                 ["first", "second"],
             )
 
+    def test_ordered_analysis_uses_requested_listing_order(self) -> None:
+        with tempfile.TemporaryDirectory() as temp_dir:
+            database_path = Path(temp_dir) / "flat_searcher.sqlite3"
+            init_database(database_path)
 
-def _insert_listing(connection) -> int:
+            with open_database(database_path) as connection:
+                first_id = _insert_listing(connection, ss_id="test-ai-1")
+                second_id = _insert_listing(connection, ss_id="test-ai-2")
+
+            provider = RecordingProvider()
+            progress_events = []
+            result = AIAnalysisService(
+                database_path=database_path,
+                provider=provider,
+            ).analyze_ordered(
+                analysis_version="ordered-test",
+                listing_ids=(second_id, first_id),
+                progress_callback=lambda listing, current, total: progress_events.append(
+                    (listing.listing_id, current, total)
+                ),
+            )
+
+            self.assertEqual(result.analyzed_count, 2)
+            self.assertEqual(provider.seen_ids, [second_id, first_id])
+            self.assertEqual(
+                progress_events,
+                [(second_id, 1, 2), (first_id, 2, 2)],
+            )
+
+    def test_ordered_analysis_can_force_already_analyzed_listing(self) -> None:
+        with tempfile.TemporaryDirectory() as temp_dir:
+            database_path = Path(temp_dir) / "flat_searcher.sqlite3"
+            init_database(database_path)
+
+            with open_database(database_path) as connection:
+                listing_id = _insert_listing(connection)
+
+            service = AIAnalysisService(
+                database_path=database_path,
+                provider=MockAIAnalysisProvider(),
+            )
+            service.analyze_pending(analysis_version="first")
+            result = service.analyze_ordered(
+                analysis_version="forced",
+                listing_ids=(listing_id,),
+                force_listing_ids=frozenset({listing_id}),
+            )
+
+            with open_database(database_path) as connection:
+                versions = connection.execute(
+                    """
+                    SELECT analysis_version
+                    FROM ai_analyses
+                    WHERE listing_id = ? AND status = 'finished'
+                    ORDER BY id
+                    """,
+                    (listing_id,),
+                ).fetchall()
+
+            self.assertEqual(result.analyzed_count, 1)
+            self.assertEqual([row["analysis_version"] for row in versions], ["first", "forced"])
+
+
+def _insert_listing(connection, ss_id: str = "test-ai-1") -> int:
     repository = ListingRepository(connection)
     run_id = repository.create_app_run("test", "2026-06-17T12:00:00+00:00")
     result = repository.upsert_listing(
         ListingPayload(
-            ss_id="test-ai-1",
-            ss_url="https://www.ss.com/msg/test-ai-1.html",
+            ss_id=ss_id,
+            ss_url=f"https://www.ss.com/msg/{ss_id}.html",
             district="Teika",
             street="Brivibas",
             house_number="100",
@@ -178,3 +256,33 @@ def _insert_listing(connection) -> int:
         checked_at="2026-06-17T12:00:01+00:00",
     )
     return result.listing_id
+
+class AIAnalysisCancellationTests(TestCase):
+    def test_analyze_pending_can_stop_before_next_listing(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            db_path = Path(tmpdir) / "test.sqlite3"
+            init_database(db_path)
+            with open_database(db_path) as connection:
+                _insert_listing(connection, "cancel-1")
+                _insert_listing(connection, "cancel-2")
+                connection.commit()
+
+            calls = 0
+            def should_cancel() -> bool:
+                return calls >= 1
+
+            class CountingProvider(MockAIAnalysisProvider):
+                def analyze(self, listing):
+                    nonlocal calls
+                    calls += 1
+                    return super().analyze(listing)
+
+            result = AIAnalysisService(db_path, CountingProvider()).analyze_pending(
+                analysis_version="test",
+                progress_callback=None,
+                should_cancel=should_cancel,
+            )
+
+            self.assertTrue(result.cancelled)
+            self.assertEqual(result.checked_count, 1)
+            self.assertEqual(result.analyzed_count, 1)

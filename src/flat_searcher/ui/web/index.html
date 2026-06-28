@@ -1,0 +1,88 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Riga Analysis</title>
+  <link rel="stylesheet" href="vendor/fonts.css">
+  <link rel="stylesheet" href="vendor/leaflet/leaflet.css">
+  <link rel="stylesheet" href="vendor/markercluster/MarkerCluster.css">
+  <link rel="stylesheet" href="vendor/markercluster/MarkerCluster.Default.css">
+  <link rel="stylesheet" href="styles.css?v=20260628-offline">
+</head>
+<body>
+  <div class="app-loading" id="appLoading" aria-live="polite">
+    <div class="app-loading-card">
+      <span class="material-symbols-outlined app-loading-icon">progress_activity</span>
+      <div>
+        <strong id="appLoadingTitle">Loading application…</strong>
+        <small id="appLoadingText">Preparing filters and rankings.</small>
+      </div>
+    </div>
+  </div>
+  <div id="app" aria-busy="true">
+    <aside class="sidebar">
+      <div class="brand">
+        <div class="brand-badge"><span class="material-symbols-outlined">apartment</span></div>
+        <div>
+          <h1>Riga Analysis</h1>
+          <p class="caps" data-i18n="brand.subtitle">Institutional Grade</p>
+        </div>
+      </div>
+      <nav class="nav" id="nav"></nav>
+      <div class="nav-footer">
+        <button class="nav-item" id="aiQueueBtn" data-nav="aiQueue">
+          <span class="material-symbols-outlined">auto_awesome_motion</span>
+          <span class="nav-item-main">
+            <span data-i18n="ai_queue.title">AI Queue</span>
+            <small class="queue-inline-status" id="queueInlineStatus"></small>
+          </span>
+          <span class="queue-status-dot" id="queueStatusDot"></span>
+        </button>
+        <button class="nav-item" data-nav="settings">
+          <span class="material-symbols-outlined">settings</span>
+          <span data-i18n="view.settings">Settings</span>
+        </button>
+      </div>
+    </aside>
+    <aside class="queue-panel" id="queuePanel"></aside>
+
+    <main class="main">
+      <header class="topbar">
+        <div class="topbar-left">
+          <div class="topbar-title" id="viewTitle">Apartment Ranking</div>
+          <div class="search">
+            <span class="material-symbols-outlined">search</span>
+            <input id="searchInput" type="text" placeholder="Search address or ID...">
+          </div>
+        </div>
+        <div class="topbar-right">
+          <div class="topbar-actions">
+            <button class="tbtn" id="filtersBtn"><span class="material-symbols-outlined">tune</span><span data-i18n="action.filters">Filters</span></button>
+            <button class="tbtn" id="syncBtn"><span class="material-symbols-outlined">sync</span><span data-i18n="action.sync">Sync</span></button>
+          </div>
+          <select class="sort-select" id="sortSelect"></select>
+          <button class="profile-pill" id="profilePill">
+            <span id="profilePillName">Profile</span>
+            <span class="material-symbols-outlined" style="font-size:16px">expand_more</span>
+          </button>
+          <select class="lang-select" id="langSelect"></select>
+        </div>
+      </header>
+      <div class="canvas" id="canvas"></div>
+    </main>
+  </div>
+
+  <div class="drawer-backdrop" id="drawerBackdrop"></div>
+  <aside class="drawer" id="drawer"></aside>
+
+  <div class="modal-backdrop" id="modalBackdrop"></div>
+
+  <div class="toast" id="toast"></div>
+
+  <script src="qrc:///qtwebchannel/qwebchannel.js"></script>
+  <script src="vendor/leaflet/leaflet.js"></script>
+  <script src="vendor/markercluster/leaflet.markercluster.js"></script>
+  <script src="app.js?v=20260628-offline"></script>
+</body>
+</html>

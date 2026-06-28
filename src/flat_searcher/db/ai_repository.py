@@ -23,6 +23,10 @@ class ListingForAnalysis:
     building_series: str | None = None
     building_type: str | None = None
     area_m2: float | None = None
+    listing_title: str | None = None
+    district: str | None = None
+    street: str | None = None
+    house_number: str | None = None
     layout_priors: tuple[dict[str, object], ...] = ()
 
 
@@ -38,7 +42,8 @@ class AIAnalysisRepository:
     ) -> tuple[ListingForAnalysis, ...]:
         query = """
             SELECT l.id, l.ss_id, l.ss_url, l.declared_rooms_ss, l.description_text,
-                   l.detail_fields_json, l.building_series, l.building_type, l.area_m2
+                   l.detail_fields_json, l.building_series, l.building_type, l.area_m2,
+                   l.listing_title, l.district, l.street, l.house_number
             FROM listings l
             WHERE l.listing_status = 'active'
               AND l.description_text IS NOT NULL
@@ -173,6 +178,10 @@ class AIAnalysisRepository:
             building_series=row["building_series"],
             building_type=row["building_type"],
             area_m2=row["area_m2"],
+            listing_title=row["listing_title"],
+            district=row["district"],
+            street=row["street"],
+            house_number=row["house_number"],
             layout_priors=tuple(prior.to_prompt_dict() for prior in priors),
         )
 

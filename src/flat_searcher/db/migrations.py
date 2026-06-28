@@ -11,7 +11,7 @@ from __future__ import annotations
 import sqlite3
 
 
-SCHEMA_VERSION = "005"
+SCHEMA_VERSION = "006"
 
 _REMOVED_COLUMNS = {
     "scoring_profiles": ("block_settings_json",),
@@ -31,7 +31,6 @@ def apply_migrations(connection: sqlite3.Connection) -> None:
             "detail_fields_json": "TEXT",
         },
     )
-    connection.execute("DROP TABLE IF EXISTS price_value_analyses")
     for table_name, columns in _REMOVED_COLUMNS.items():
         _drop_columns(connection, table_name, columns)
 

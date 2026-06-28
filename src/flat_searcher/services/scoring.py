@@ -52,9 +52,15 @@ class ScoreRecalculationService:
                     _market_listing(listing),
                     market_listings,
                 )
-                blocks = _block_scores(listing, price_value.relative_market_score, median_area)
+                blocks = _block_scores(listing, price_value.price_value_score, median_area)
                 result = calculate_weighted_score(profile, blocks)
-                repository.save_score_result(listing.listing_id, result, _now())
+                calculated_at = _now()
+                repository.save_price_value_result(
+                    listing.listing_id,
+                    price_value,
+                    calculated_at,
+                )
+                repository.save_score_result(listing.listing_id, result, calculated_at)
                 if result.overall_score is not None:
                     scored_count += 1
 

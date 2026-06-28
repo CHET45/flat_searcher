@@ -28,6 +28,46 @@ class SSListParser:
                 summaries.append(summary)
         return summaries
 
+    def next_page_url(self, html: str, base_url: str) -> str | None:
+        root = parse_html(html)
+        current_page = _active_navigation_page(root) or _page_number_from_url(base_url)
+        numeric_candidates: list[tuple[int, str]] = []
+        next_label_candidate: str | None = None
+
+        for link in root.find_all(_is_navigation_link):
+            href = link.attr("href")
+            if not href:
+                continue
+            absolute_url = urljoin(base_url, href)
+            target_page = _page_number_from_url(absolute_url)
+            text = clean_text(link.text_content()) or ""
+            normalized = text.lower()
+
+            if any(word in normalized for word in _PREVIOUS_PAGE_WORDS):
+                continue
+            if any(word in normalized for word in _NEXT_PAGE_WORDS) or (link.attr("rel") or "").lower() == "next":
+                if target_page > current_page:
+                    next_label_candidate = absolute_url
+                    continue
+            if target_page > current_page:
+                numeric_candidates.append((target_page, absolute_url))
+
+        if next_label_candidate is not None:
+            return next_label_candidate
+        if numeric_candidates:
+            return min(numeric_candidates, key=lambda item: item[0])[1]
+        return None
+
+    def max_navigation_page(self, html: str, base_url: str) -> int:
+        root = parse_html(html)
+        pages = [_active_navigation_page(root) or _page_number_from_url(base_url)]
+        for link in root.find_all(_is_navigation_link):
+            href = link.attr("href")
+            if not href:
+                continue
+            pages.append(_page_number_from_url(urljoin(base_url, href)))
+        return max(pages)
+
     def _parse_row(self, row: HtmlNode, base_url: str) -> ListingSummary | None:
         ss_id = row.attr("id")
         if not ss_id:
@@ -155,11 +195,64 @@ def _is_listing_row(node: HtmlNode) -> bool:
     return node.tag == "tr" and bool(row_id and row_id.startswith("tr_"))
 
 
+_NEXT_PAGE_WORDS = frozenset(
+    (
+        "next",
+        "nākam",
+        "talak",
+        "tālāk",
+        "след",
+        "dalje",
+    )
+)
+_PREVIOUS_PAGE_WORDS = frozenset(
+    (
+        "prev",
+        "iepriekš",
+        "previous",
+        "назад",
+        "пред",
+    )
+)
+
+
+def _is_navigation_link(node: HtmlNode) -> bool:
+    return (
+        node.tag == "a"
+        and node.attr("href") is not None
+        and (
+            node.attr("name") == "nav_id"
+            or node.has_class("navi")
+            or (node.attr("rel") or "").lower() in {"next", "prev"}
+            or "/page" in (node.attr("href") or "")
+        )
+    )
+
+
+def _active_navigation_page(root: HtmlNode) -> int | None:
+    node = root.first(lambda child: child.tag == "button" and child.has_class("navia"))
+    if node is None:
+        return None
+    text = clean_text(node.text_content()) or ""
+    if not text.isdigit():
+        return None
+    return int(text)
+
+
+def _page_number_from_url(url: str) -> int:
+    match = re.search(r"/page(\d+)\.html(?:$|[?#])", url)
+    if match:
+        return int(match.group(1))
+    return 1
+
+
 def _first_listing_link(node: HtmlNode) -> HtmlNode | None:
     text_link = node.first(
-        lambda child: child.tag == "a"
-        and "/msg/" in (child.attr("href") or "")
-        and (child.has_class("am") or bool(child.text_content()))
+        lambda child: (
+            child.tag == "a"
+            and "/msg/" in (child.attr("href") or "")
+            and (child.has_class("am") or bool(child.text_content()))
+        )
     )
     if text_link is not None:
         return text_link

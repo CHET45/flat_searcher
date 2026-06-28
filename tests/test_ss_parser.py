@@ -24,6 +24,16 @@ class SSParserTests(TestCase):
         self.assertIsNotNone(first.street)
         self.assertIsNotNone(first.price_eur)
 
+    def test_list_parser_extracts_next_page_url(self) -> None:
+        html = (FIXTURES / "list_page.html").read_text(encoding="utf-8")
+
+        next_url = SSListParser().next_page_url(html, LIST_URL)
+
+        self.assertEqual(
+            next_url,
+            "https://www.ss.com/lv/real-estate/flats/riga/all/sell/page2.html",
+        )
+
     def test_detail_parser_extracts_description_fields_and_images(self) -> None:
         html = (FIXTURES / "detail_page.html").read_text(encoding="utf-8")
 
@@ -58,3 +68,24 @@ class SSParserTests(TestCase):
         self.assertEqual(payload.price_eur, 128000)
         self.assertEqual(payload.address_raw, "Stabu 87")
         self.assertGreater(len(payload.image_urls), 10)
+
+    def test_list_parser_uses_next_numeric_page_hidden_behind_ellipsis(self) -> None:
+        html = """
+            <html><body>
+              <div>
+                <a name="nav_id" class="navi" href="page8.html">8</a>
+                <button class="navia">9</button>
+                <a name="nav_id" class="navi" href="page10.html">..</a>
+              </div>
+            </body></html>
+        """
+
+        next_url = SSListParser().next_page_url(
+            html,
+            "https://www.ss.com/lv/real-estate/flats/riga/all/sell/page9.html",
+        )
+
+        self.assertEqual(
+            next_url,
+            "https://www.ss.com/lv/real-estate/flats/riga/all/sell/page10.html",
+        )

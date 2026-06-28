@@ -43,6 +43,18 @@ class MapMarker:
         return data
 
 
+@dataclass(frozen=True)
+class MapReferencePoint:
+    point_id: str
+    latitude: float
+    longitude: float
+    kind: str
+    title: str
+
+    def to_dict(self) -> dict[str, object]:
+        return asdict(self)
+
+
 def build_map_markers(points: tuple[MapApartmentPoint, ...]) -> tuple[MapMarker, ...]:
     markers = []
     for point in points:

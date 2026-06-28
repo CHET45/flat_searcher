@@ -40,6 +40,9 @@ class ScoreRecalculationServiceTests(TestCase):
                 score_rows = connection.execute(
                     "SELECT * FROM score_results ORDER BY listing_id"
                 ).fetchall()
+                price_value_rows = connection.execute(
+                    "SELECT * FROM price_value_analyses ORDER BY listing_id"
+                ).fetchall()
                 candidates = ListingReadRepository(connection).load_candidates(
                     "for_living_mortgage"
                 )
@@ -54,11 +57,16 @@ class ScoreRecalculationServiceTests(TestCase):
                 "Critical factor",
             )
             self.assertEqual(len(score_rows), 3)
+            self.assertEqual(len(price_value_rows), 3)
             self.assertTrue(all(row["overall_score"] is not None for row in score_rows))
+            self.assertTrue(
+                all(row["price_value_score"] is not None for row in price_value_rows)
+            )
             first_candidate = next(
                 candidate for candidate in candidates if candidate.listing_id == first_id
             )
             self.assertIsNotNone(first_candidate.score)
+            self.assertIsNotNone(first_candidate.price_value_score)
 
 
 def _insert_listing(connection, ss_id: str, price_eur: int, area_m2: float) -> int:
