@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import logging
 from dataclasses import dataclass
 from pathlib import Path
 
@@ -14,6 +15,8 @@ from flat_searcher.geo import (
     location_score_eligibility,
 )
 from flat_searcher.geo.geocoder import Geocoder
+
+logger = logging.getLogger(__name__)
 
 
 @dataclass(frozen=True)
@@ -35,7 +38,11 @@ class GeocodingService:
             geocoded_count = 0
             score_enabled_count = 0
             for record in records:
-                geocoded, scores_enabled = self._geocode_record(repository, record)
+                try:
+                    geocoded, scores_enabled = self._geocode_record(repository, record)
+                except Exception:
+                    logger.exception("Geocoding failed for listing_id=%s", record.listing_id)
+                    continue
                 geocoded_count += 1 if geocoded else 0
                 score_enabled_count += 1 if scores_enabled else 0
             return GeocodingRunResult(
