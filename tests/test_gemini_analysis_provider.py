@@ -24,7 +24,12 @@ class FakeModelClient:
         self.responses = list(responses)
         self.image_paths: list[tuple[Path, ...]] = []
 
-    def generate_text(self, prompt: str, image_paths: tuple[Path, ...] = ()) -> str:
+    def generate_text(
+        self,
+        prompt: str,
+        image_paths: tuple[Path, ...] = (),
+        response_schema: dict[str, object] | None = None,
+    ) -> str:
         self.image_paths.append(image_paths)
         return self.responses.pop(0)
 

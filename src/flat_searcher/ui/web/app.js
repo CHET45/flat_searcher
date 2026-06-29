@@ -4,6 +4,8 @@ let bridge = null;
 let syncPollTimer = null;
 let aiQueueRefreshTimer = null;
 let lastQueuePanelSig = null;
+let aiLiveTimer = null;
+let lastAiSeq = -1;
 
 const state = {
   view: "ranking",
@@ -32,12 +34,15 @@ const state = {
   languages: [],
   syncBusy: false,
   pendingReload: false,
+  hasRendered: false,
   pipelineStatus: null,
   aiQueueOpen: false,
   aiQueueLoaded: false,
   aiQueue: [],
   aiAnalyzedOptions: [],
   aiCurrentListingId: null,
+  aiAnalyzing: [],
+  aiAnalyzingIds: new Set(),
   aiBusy: false,
   aiPaused: false,
 };
@@ -129,6 +134,7 @@ new QWebChannel(qt.webChannelTransport, (channel) => {
   if (bridge.aiFinished) bridge.aiFinished.connect(onAIFinished);
   if (bridge.aiFailed) bridge.aiFailed.connect(onAIFailed);
   if (bridge.scoresReady) bridge.scoresReady.connect(onScoresReady);
+  if (bridge.aiRefresh) bridge.aiRefresh.connect(onAIRefresh);
   bridge.pipelineProgress.connect(onPipelineProgress);
   boot();
 });
@@ -158,23 +164,38 @@ async function boot() {
       renderAIQueuePanel();
     }
     await reload();
+    // reload() has rendered and dropped the blocking overlay by now; the app is
+    // interactive even if a background recalc/analysis is still running.
+    console.info("flat-searcher UI ready");
     await ensureAIQueueRunning();
+    startAILivePolling();
   } catch (error) {
     setAppLoading(true, "Failed to load application", String(error));
     throw error;
-  } finally {
-    if (!state.pendingReload && (state.rows || state.view)) setAppLoading(false);
   }
 }
 
 function setAppLoading(active, title, text) {
   const overlay = el("appLoading");
   const app = el("app");
-  if (!overlay) return;
-  if (title && el("appLoadingTitle")) el("appLoadingTitle").textContent = title;
-  if (text && el("appLoadingText")) el("appLoadingText").textContent = text;
-  overlay.hidden = !active;
+  // Only the very first load (before anything has rendered) is allowed to show
+  // the full blocking overlay -- there is genuinely nothing to interact with
+  // yet. Once the app has rendered once, every later load (profile recalc,
+  // background pipeline refresh, sync) keeps the UI fully interactive and shows
+  // a subtle non-blocking progress bar instead, so the user is never locked out.
+  const blocking = active && !state.hasRendered;
+  if (overlay) {
+    if (title && el("appLoadingTitle")) el("appLoadingTitle").textContent = title;
+    if (text && el("appLoadingText")) el("appLoadingText").textContent = text;
+    overlay.hidden = !blocking;
+  }
+  setBusyBar(active && state.hasRendered);
   if (app) app.setAttribute("aria-busy", active ? "true" : "false");
+}
+
+function setBusyBar(active) {
+  const bar = el("appBusyBar");
+  if (bar) bar.hidden = !active;
 }
 
 function normalizeFilterBounds(raw) {
@@ -333,10 +354,14 @@ function progressText(status) {
   if (status.stage === "infrastructure") return t("progress.infrastructure");
   if (status.stage === "location") return t("progress.location");
   if (status.stage === "ai") {
+    const analyzing = Array.isArray(status.analyzing) ? status.analyzing : [];
+    const label = analyzing.length
+      ? analyzing.map((a) => a.listing).filter(Boolean).join(", ")
+      : (status.listing || "");
     return tf("progress.ai", {
-      current: status.current || 0,
+      current: status.analyzed != null ? status.analyzed : (status.current || 0),
       total: status.total || 0,
-      listing: status.listing || "",
+      listing: label,
     });
   }
   if (status.stage === "ai_stopping") return t("progress.ai_stopping");
@@ -398,8 +423,8 @@ async function loadAIQueue() {
 
 function applyAIQueuePayload(data) {
   let queue = data.queue || [];
-  if (isAIActive() && state.aiCurrentListingId) {
-    queue = queue.filter((item) => item.listingId !== state.aiCurrentListingId);
+  if (isAIActive() && state.aiAnalyzingIds && state.aiAnalyzingIds.size) {
+    queue = queue.filter((item) => !state.aiAnalyzingIds.has(item.listingId));
   }
   state.aiQueue = queue;
   state.aiAnalyzedOptions = data.analyzedOptions || [];
@@ -503,7 +528,7 @@ function renderAIQueuePanel() {
   const canStop = aiRunning;
   const sig = JSON.stringify({
     currentText, aiRunning, canStart, canStop,
-    cur: state.aiCurrentListingId,
+    cur: Array.from(state.aiAnalyzingIds || []),
     q: state.aiQueue.map((i) => [i.listingId, i.status]),
     opts: state.aiAnalyzedOptions.map((i) => i.listingId),
   });
@@ -564,7 +589,8 @@ function renderAIQueuePanel() {
 }
 
 function queueItemHtml(item, index) {
-  const isCurrent = item.listingId === state.aiCurrentListingId;
+  const isCurrent = (state.aiAnalyzingIds && state.aiAnalyzingIds.has(item.listingId))
+    || item.listingId === state.aiCurrentListingId;
   const canUp = index > 0;
   const canDown = index < state.aiQueue.length - 1;
   const status = isCurrent ? "current" : item.status;
@@ -626,15 +652,13 @@ async function addAnalyzedToQueue() {
 }
 
 /* ===================== Data load ===================== */
-async function reload() {
-  if (state.view === "settings") { updateTopbar(); renderSettings(); return; }
+// Fetch the current view's data into state. A background score recalculation
+// may still be running (it is kicked off on launch and after data changes), but
+// we NEVER block the UI on it: we render whatever scores are already persisted
+// and set pendingReload so scoresReady can refresh in place when it completes.
+async function fetchViewData() {
   const prep = await callJson("prepareProfile", state.profileKey);
-  if (prep && prep.ready === false) {
-    state.pendingReload = true;
-    setAppLoading(true, t("status.recalculating_scores"), t("status.loading_data"));
-    return;
-  }
-  state.pendingReload = false;
+  state.pendingReload = Boolean(prep && prep.ready === false);
   const payload = JSON.stringify({
     tab: state.tab,
     profileKey: state.profileKey,
@@ -647,19 +671,74 @@ async function reload() {
   state.referencePoints = data.referencePoints || [];
   state.mapCoverage = data.mapCoverage || { visible: state.rows.length, geocoded: state.markers.length };
   state.summary = data.summary || {};
+  return true;
+}
+
+// User-initiated reload: re-fetch and fully re-render the current view. Always
+// renders immediately; if a recalc is still in flight the subtle busy bar stays
+// up (never the blocking overlay) so the app is usable right away.
+async function reload() {
+  if (state.view === "settings") { updateTopbar(); renderSettings(); return; }
+  await fetchViewData();
   setAppLoading(false);
+  setBusyBar(state.pendingReload);
   updateTopbar();
   renderCurrent();
 }
 
-function onScoresReady(profileKey) {
-  if (profileKey === state.profileKey && state.pendingReload) {
-    state.pendingReload = false;
-    reload();
+// Background refresh driven by the analysis pipeline (between AI chunks and the
+// native fallback). Updates the data without blocking and without tearing down
+// interactive surfaces: the ranking list is re-rendered in place with its
+// scroll position preserved, while the map / comparison / detail views keep
+// their live widget and just refresh their counts. They pick up fresh data the
+// next time the user navigates to them.
+async function onAIRefresh() {
+  state.aiQueueLoaded = false;
+  await softReload();
+}
+
+let softReloadRunning = false;
+let softReloadAgain = false;
+async function softReload() {
+  if (!bridge || state.view === "settings" || state.view === "detail") return;
+  // Per-listing refreshes can arrive close together (two analyses finish at
+  // once). Coalesce so we never run overlapping fetch+render passes.
+  if (softReloadRunning) { softReloadAgain = true; return; }
+  softReloadRunning = true;
+  try {
+    const onRanking = state.view === "ranking";
+    const canvas = el("canvas");
+    const scrollTop = (onRanking && canvas) ? canvas.scrollTop : 0;
+    await fetchViewData();
+    setAppLoading(false);
+    setBusyBar(state.pendingReload);
+    updateTopbar();
+    if (onRanking) {
+      renderCurrent();
+      const after = el("canvas");
+      if (after && scrollTop) after.scrollTop = scrollTop;
+    } else if (state.view === "map") {
+      // Drop in newly analyzed apartments while keeping the current zoom/pan.
+      syncMapMarkers();
+    }
+  } finally {
+    softReloadRunning = false;
+    if (softReloadAgain) { softReloadAgain = false; setTimeout(softReload, 0); }
   }
 }
 
+// Reliable refresh hook the native shell calls via runJavaScript.
+window.__flatSearcherSoftRefresh = softReload;
+
+function onScoresReady(profileKey) {
+  if (profileKey !== state.profileKey) return;
+  state.pendingReload = false;
+  setBusyBar(false);
+  softReload();
+}
+
 function renderCurrent() {
+  state.hasRendered = true;
   updateTopbar();
   if (state.view === "ranking") renderRanking();
   else if (state.view === "map") renderMap();
@@ -985,12 +1064,7 @@ function renderMap() {
   mapMarkerIndex = {};
   const bounds = [];
   markers.forEach((m) => {
-    const marker = L.marker([m.latitude, m.longitude], {
-      icon: aptIcon(m),
-      zIndexOffset: 800,
-    });
-    marker.bindPopup(mapPopup(m), { minWidth: 300, className: "apt-popup" });
-    marker.on("popupopen", () => bindPopup(m));
+    const marker = makeAptMarker(m);
     mapMarkerIndex[m.listingId] = marker;
     mapLayer.addLayer(marker);
     bounds.push([m.latitude, m.longitude]);
@@ -1006,6 +1080,33 @@ function renderMap() {
   });
   if (bounds.length === 1) map.setView(bounds[0], 14);
   else if (bounds.length > 1) map.fitBounds(bounds, { padding: [40, 40] });
+}
+
+function makeAptMarker(m) {
+  const marker = L.marker([m.latitude, m.longitude], { icon: aptIcon(m), zIndexOffset: 800 });
+  marker.bindPopup(mapPopup(m), { minWidth: 300, className: "apt-popup" });
+  marker.on("popupopen", () => bindPopup(m));
+  return marker;
+}
+
+// Add markers for newly analyzed apartments (and refresh changed ones) onto the
+// live map without rebuilding it, so the user's current zoom/pan is preserved.
+function syncMapMarkers() {
+  if (!map || !mapLayer || !window.L) return 0;
+  let added = 0;
+  visibleMarkers().forEach((m) => {
+    const existing = mapMarkerIndex[m.listingId];
+    if (existing) {
+      existing.setIcon(aptIcon(m));
+      if (existing.getPopup()) existing.setPopupContent(mapPopup(m));
+    } else {
+      const marker = makeAptMarker(m);
+      mapMarkerIndex[m.listingId] = marker;
+      mapLayer.addLayer(marker);
+      added += 1;
+    }
+  });
+  return added;
 }
 
 const SCORE_COLORS = { high: "#16a34a", medium: "#c58a00", low: "#d55b2d", very_low: "#b42318", unknown: "#515f74" };
@@ -1501,13 +1602,18 @@ function applyPipelineStatus(status) {
   state.pipelineStatus = status;
   state.aiBusy = status.stage === "ai" || status.stage === "ai_prepare" || status.stage === "ai_stopping";
   if (state.pipelineStatus && state.pipelineStatus.stage === "ai") {
-    state.aiCurrentListingId = state.pipelineStatus.listingId || null;
-    if (state.aiCurrentListingId) {
-      state.aiQueue = state.aiQueue.filter((item) => item.listingId !== state.aiCurrentListingId);
+    const analyzing = Array.isArray(state.pipelineStatus.analyzing) ? state.pipelineStatus.analyzing : [];
+    state.aiAnalyzing = analyzing;
+    state.aiAnalyzingIds = new Set(analyzing.map((a) => a.listingId));
+    state.aiCurrentListingId = analyzing.length ? analyzing[0].listingId : (state.pipelineStatus.listingId || null);
+    if (state.aiAnalyzingIds.size) {
+      state.aiQueue = state.aiQueue.filter((item) => !state.aiAnalyzingIds.has(item.listingId));
     }
     scheduleAIQueueRefresh();
   } else if (state.pipelineStatus && (state.pipelineStatus.stage === "ai_prepare" || state.pipelineStatus.stage === "ai_stopped")) {
     state.aiCurrentListingId = null;
+    state.aiAnalyzing = [];
+    state.aiAnalyzingIds = new Set();
   }
   if (state.pipelineStatus && state.pipelineStatus.stage === "ai_stopped") {
     state.aiBusy = false;
@@ -1515,6 +1621,33 @@ function applyPipelineStatus(status) {
   }
   updateTopbar();
   if (state.aiQueueOpen) renderAIQueuePanel();
+}
+// Persistent, lightweight poll that drives live analysis updates entirely
+// through QWebChannel pulls (no Python->JS push, which destabilises the channel
+// under load). Shows which apartments are analyzing now and, as each completes,
+// pulls it into the ranking and onto the map.
+function startAILivePolling() {
+  if (aiLiveTimer) return;
+  aiLiveTimer = setInterval(pollAILive, 1500);
+  pollAILive();
+}
+async function pollAILive() {
+  if (!bridge) return;
+  try {
+    const data = await callJson("syncStatus");
+    if (!data) return;
+    state.aiBusy = Boolean(data.aiBusy);
+    state.aiPaused = Boolean(data.aiPaused);
+    if (data.status) applyPipelineStatus(data.status);
+    updateTopbar();
+    if (state.aiQueueOpen) renderAIQueuePanel();
+    if (data.aiSeq != null && data.aiSeq !== lastAiSeq) {
+      lastAiSeq = data.aiSeq;
+      softReload();
+    }
+  } catch (error) {
+    // Never let polling break the app.
+  }
 }
 function startSyncPolling() {
   stopSyncPolling();

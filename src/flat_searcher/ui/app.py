@@ -9,7 +9,7 @@ import mimetypes
 from dataclasses import dataclass
 from datetime import datetime, timezone
 from pathlib import Path
-from threading import Event
+from threading import Event, Lock
 
 from flat_searcher.ai import AIAnalysisPipeline, GeminiModelClient
 from flat_searcher.config import DEFAULT_SS_START_URL, AppConfig
@@ -27,8 +27,6 @@ from flat_searcher.presentation import (
     filters_for_tab,
 )
 from flat_searcher.ranking import rank_candidates
-from flat_searcher.geo.geocoder import NominatimGeocoder
-from flat_searcher.geo.overpass import OverpassPOIProvider
 from flat_searcher.images import ImageDownloader
 from flat_searcher.scoring import (
     ImportanceLevel,
@@ -38,14 +36,7 @@ from flat_searcher.scoring import (
 )
 from flat_searcher.scraper.http_client import HttpTextClient
 from flat_searcher.services.ai_analysis import AIAnalysisProvider, AIAnalysisService, MockAIAnalysisProvider
-from flat_searcher.services.geocoding import GeocodingRunResult, GeocodingService
 from flat_searcher.services.gemini_analysis import GeminiAnalysisProvider
-from flat_searcher.services.infrastructure import (
-    InfrastructureRefreshResult,
-    InfrastructureRefreshService,
-)
-from flat_searcher.services.location_scoring import LocationScoreService
-from flat_searcher.services.processing import ListingProcessingResult
 from flat_searcher.services.scoring import ScoreRecalculationService
 from flat_searcher.services.sync import ListingSyncService, SyncResult
 from flat_searcher.ui import payloads
@@ -54,7 +45,75 @@ from flat_searcher.ui.translations import LANGUAGES, translate, ui_strings
 WEB_DIR = Path(__file__).resolve().parent / "web"
 logger = logging.getLogger(__name__)
 
-AUTO_ANALYSIS_CHUNK = 12
+
+class AIProgressState:
+    """Shared work queue + live progress for the parallel analysis lanes.
+
+    Several Qt worker threads ("lanes") pull listings from here and report what
+    they are analyzing. Everything is guarded by a lock so the GUI thread can
+    read a consistent ``snapshot()`` while the lanes write. It is a plain object
+    (not a QObject) so the lanes never touch Qt state — which corrupts PySide's
+    meta-objects when done from worker threads.
+    """
+
+    def __init__(self, items: list[tuple[int, bool]]) -> None:
+        self._lock = Lock()
+        self._items = list(items)
+        self._index = 0
+        self._inflight: dict[int, str] = {}
+        self._done = 0
+        self._analyzed = 0
+        self._failed = 0
+        self._total = len(items)
+        self._seq = 0
+        self._stop = Event()
+
+    def request_stop(self) -> None:
+        self._stop.set()
+
+    def cancelled(self) -> bool:
+        return self._stop.is_set()
+
+    def next_item(self) -> tuple[int, bool] | None:
+        with self._lock:
+            if self._index >= len(self._items):
+                return None
+            item = self._items[self._index]
+            self._index += 1
+            return item
+
+    def mark_started(self, listing_id: int, label: str) -> None:
+        with self._lock:
+            self._inflight[listing_id] = label
+
+    def mark_finished(self, listing_id: int, ok: bool) -> None:
+        with self._lock:
+            self._inflight.pop(listing_id, None)
+            self._done += 1
+            self._seq += 1
+            if ok:
+                self._analyzed += 1
+            else:
+                self._failed += 1
+
+    def totals(self) -> tuple[int, int, int]:
+        with self._lock:
+            return self._done, self._analyzed, self._failed
+
+    def snapshot(self) -> dict[str, object]:
+        with self._lock:
+            analyzing = [
+                {"listingId": listing_id, "listing": label}
+                for listing_id, label in self._inflight.items()
+            ]
+            return {
+                "analyzing": analyzing,
+                "done": self._done,
+                "analyzed": self._analyzed,
+                "failed": self._failed,
+                "total": self._total,
+                "seq": self._seq,
+            }
 
 
 class UIDependencyError(RuntimeError):
@@ -92,9 +151,32 @@ def run_desktop_app(config: DesktopUIConfig) -> int:
 def _create_main_window(config: DesktopUIConfig):
     from PySide6.QtCore import QObject, Qt, QThread, QTimer, QUrl, Signal, Slot
     from PySide6.QtWebChannel import QWebChannel
-    from PySide6.QtWebEngineCore import QWebEngineSettings
+    from PySide6.QtWebEngineCore import QWebEnginePage, QWebEngineSettings
     from PySide6.QtWebEngineWidgets import QWebEngineView
     from PySide6.QtWidgets import QLabel, QMainWindow, QStatusBar
+
+    class LoggingWebEnginePage(QWebEnginePage):
+        """Forwards JavaScript console output into the Python log.
+
+        Without this, errors raised inside the embedded web UI vanish silently
+        and the canvas just renders blank. Routing them to the log file makes
+        front-end failures debuggable from the same place as the rest of the app.
+        """
+
+        _LEVELS = {
+            QWebEnginePage.JavaScriptConsoleMessageLevel.InfoMessageLevel: logging.INFO,
+            QWebEnginePage.JavaScriptConsoleMessageLevel.WarningMessageLevel: logging.WARNING,
+            QWebEnginePage.JavaScriptConsoleMessageLevel.ErrorMessageLevel: logging.ERROR,
+        }
+
+        def javaScriptConsoleMessage(self, level, message, line_number, source_id):
+            logger.log(
+                self._LEVELS.get(level, logging.INFO),
+                "UI JS console [%s:%s]: %s",
+                source_id,
+                line_number,
+                message,
+            )
 
     class SyncWorker(QObject):
         progress = Signal(str)
@@ -154,102 +236,63 @@ def _create_main_window(config: DesktopUIConfig):
         def _emit_progress(self, payload: dict[str, object]) -> None:
             self.progress.emit(_dumps(payload))
 
-    class AIQueueWorker(QObject):
-        progress = Signal(str)
-        finished = Signal(object)
-        failed = Signal(str)
+    class AILaneWorker(QObject):
+        """One analysis lane. Runs on its own Qt thread, pulling listings from the
+        shared queue and analyzing them sequentially. Running N lanes gives N
+        parallel analyses (independent Gemini requests — quality is unchanged).
+        Analysis stays on Qt threads because doing it on plain pool threads
+        corrupts PySide's meta-object state."""
 
-        def __init__(
-            self,
-            database_path: Path,
-            profile_key: str,
-            analysis_order: tuple[int, ...],
-            force_listing_ids: frozenset[int],
-        ) -> None:
+        finished = Signal()
+
+        def __init__(self, database_path: Path, profile_key: str, state: AIProgressState) -> None:
             super().__init__()
             self._database_path = database_path
             self._profile_key = profile_key
-            self._analysis_order = analysis_order
-            self._force_listing_ids = force_listing_ids
-            self._stop_requested = Event()
-
-        @Slot()
-        def request_stop(self) -> None:
-            logger.info("UI AI queue worker stop requested")
-            self._stop_requested.set()
+            self._state = state
 
         @Slot()
         def run(self) -> None:
-            logger.info(
-                "UI AI queue worker entered: database=%s profile=%s queued=%s force=%s",
-                self._database_path,
-                self._profile_key,
-                len(self._analysis_order),
-                sorted(self._force_listing_ids),
-            )
             try:
                 runtime_config = AppConfig.from_env(database_override=self._database_path)
                 runtime_config.ensure_runtime_directories()
                 provider = _build_ui_analysis_provider(runtime_config)
+                service = AIAnalysisService(database_path=self._database_path, provider=provider)
+                score_service = ScoreRecalculationService(self._database_path)
 
-                def on_ai_progress(listing: ListingForAnalysis, index: int, total: int) -> None:
-                    self._emit_progress(
-                        {
-                            "stage": "ai",
-                            "current": index,
-                            "total": total,
-                            "listing": _listing_progress_label(listing),
-                            "listingId": listing.listing_id,
-                            "ssId": listing.ss_id,
-                        }
-                    )
-
-                self._emit_progress(
-                    {
-                        "stage": "ai_prepare",
-                        "current": 0,
-                        "total": len(self._analysis_order),
-                    }
-                )
-                ai_result = AIAnalysisService(
-                    database_path=self._database_path,
-                    provider=provider,
-                ).analyze_ordered(
-                    analysis_version="ui-auto-v1",
-                    listing_ids=self._analysis_order,
-                    force_listing_ids=self._force_listing_ids,
-                    progress_callback=on_ai_progress,
-                    should_cancel=self._stop_requested.is_set,
-                )
-                if ai_result.cancelled:
-                    self._emit_progress(
-                        {
-                            "stage": "ai_stopped",
-                            "checked": ai_result.checked_count,
-                            "analyzed": ai_result.analyzed_count,
-                            "failed": ai_result.failed_count,
-                        }
-                    )
-                self._emit_progress({"stage": "location"})
-                location_result = LocationScoreService(self._database_path).recalculate()
-                self._emit_progress({"stage": "scoring"})
-                scoring_result = ScoreRecalculationService(self._database_path).recalculate(
-                    self._profile_key
-                )
-                result = ListingProcessingResult(
-                    ai=ai_result,
-                    location=location_result,
-                    scoring=scoring_result,
-                )
-            except Exception as error:
-                logger.exception("UI AI queue worker failed")
-                self.failed.emit(str(error))
-                return
-            logger.info("UI AI queue worker finished successfully: %s", result)
-            self.finished.emit(result)
-
-        def _emit_progress(self, payload: dict[str, object]) -> None:
-            self.progress.emit(_dumps(payload))
+                while not self._state.cancelled():
+                    item = self._state.next_item()
+                    if item is None:
+                        break
+                    listing_id, force = item
+                    try:
+                        result = service.analyze_single(
+                            listing_id,
+                            "ui-auto-v2",
+                            force,
+                            on_started=lambda listing: self._state.mark_started(
+                                listing.listing_id, _listing_progress_label(listing)
+                            ),
+                        )
+                    except Exception:
+                        logger.exception("UI AI lane analyze failed: %s", listing_id)
+                        result = None
+                    if result is None:
+                        continue
+                    listing, ok = result
+                    if ok:
+                        try:
+                            # Re-score just this listing so it lands in the ranking
+                            # and on the map immediately (cheap, vs a full pass).
+                            score_service.recalculate_one(listing.listing_id, self._profile_key)
+                        except Exception:
+                            logger.exception(
+                                "UI per-listing score failed: %s", listing.listing_id
+                            )
+                    self._state.mark_finished(listing.listing_id, ok)
+            except Exception:
+                logger.exception("UI AI lane crashed")
+            self.finished.emit()
 
     class RecalcWorker(QObject):
         finished = Signal(str)
@@ -285,6 +328,7 @@ def _create_main_window(config: DesktopUIConfig):
             super().__init__()
             self._language = config.language
             self._profile_key = config.profile_key
+            self._view_listing_ids: tuple[int, ...] = ()
             self._scored: set[str] = set()
             self._recalc_thread: QThread | None = None
             self._recalc_worker: RecalcWorker | None = None
@@ -292,8 +336,12 @@ def _create_main_window(config: DesktopUIConfig):
             self._recalc_pending_key: str | None = None
             self._sync_thread: QThread | None = None
             self._sync_worker: SyncWorker | None = None
-            self._ai_thread: QThread | None = None
-            self._ai_worker: AIQueueWorker | None = None
+            self._ai_lane_threads: list[QThread] = []
+            self._ai_lanes: list[QObject] = []
+            self._ai_lanes_remaining = 0
+            self._ai_running = False
+            self._ai_run_order: tuple[int, ...] = ()
+            self._ai_progress_state: AIProgressState | None = None
             self._ai_attempted_ids: set[int] = set()
             self._ai_session_analyzed = 0
             self._ai_session_failed = 0
@@ -330,15 +378,23 @@ def _create_main_window(config: DesktopUIConfig):
         def loadView(self, state_json: str) -> str:
             state = json.loads(state_json)
             self._profile_key = state.get("profileKey") or self._profile_key
-            return _dumps(
-                _build_view(
-                    config,
-                    self._language,
-                    self._profile_key,
-                    state.get("filters") or {},
-                    state.get("tab") or "all",
-                )
+            view = _build_view(
+                config,
+                self._language,
+                self._profile_key,
+                state.get("filters") or {},
+                state.get("tab") or "all",
             )
+            # Remember which listings match the current filters/tab so the AI
+            # queue can analyze only what the user is actually looking at, in the
+            # same ranked order shown on screen.
+            rows = view.get("rows") or []
+            self._view_listing_ids = tuple(
+                int(row["listingId"])
+                for row in rows
+                if isinstance(row, dict) and row.get("listingId") is not None
+            )
+            return _dumps(view)
 
         @Slot(int, str, result=str)
         def loadDetail(self, listing_id: int, profile_key: str) -> str:
@@ -475,22 +531,23 @@ def _create_main_window(config: DesktopUIConfig):
         def ensureAIQueueRunning(self) -> str:
             self._arm_ai_auto_timer()
             started = self._maybe_start_ai_queue(manual=False)
-            return _dumps({"started": started, "busy": self._ai_thread is not None, "paused": self._ai_paused})
+            return _dumps({"started": started, "busy": self._ai_running, "paused": self._ai_paused})
 
         @Slot(result=str)
         def startAIQueue(self) -> str:
             self._ai_paused = False
             self._arm_ai_auto_timer()
             started = self._maybe_start_ai_queue(manual=True)
-            return _dumps({"started": started, "busy": self._ai_thread is not None, "paused": self._ai_paused})
+            return _dumps({"started": started, "busy": self._ai_running, "paused": self._ai_paused})
 
         @Slot(result=str)
         def stopAIQueue(self) -> str:
             self._ai_paused = True
-            if self._ai_worker is not None:
+            if self._ai_running:
                 self._set_pipeline_status({"stage": "ai_stopping"})
                 self._emit_pipeline_status_now()
-                self._ai_worker.request_stop()
+                if self._ai_progress_state is not None:
+                    self._ai_progress_state.request_stop()
                 return _dumps({"stopping": True, "busy": True, "paused": self._ai_paused})
             self._set_pipeline_status({"stage": "ai_stopped", "checked": 0, "analyzed": 0, "failed": 0})
             self._emit_pipeline_status_now()
@@ -498,13 +555,20 @@ def _create_main_window(config: DesktopUIConfig):
 
         @Slot(result=str)
         def syncStatus(self) -> str:
+            # While the AI queue runs, report live progress straight from the
+            # shared state (which apartments are analyzing now, how many done).
+            # The web UI polls this, so no Python->JS push is needed.
+            live = self._ai_live_status()
+            status = live if live is not None else self._latest_pipeline_status
             return _dumps(
                 {
-                    "busy": self._sync_thread is not None or self._ai_thread is not None,
+                    "busy": self._sync_thread is not None or self._ai_running,
                     "syncBusy": self._sync_thread is not None,
-                    "aiBusy": self._ai_thread is not None,
+                    "aiBusy": self._ai_running,
                     "aiPaused": self._ai_paused,
-                    "status": self._latest_pipeline_status,
+                    "status": status,
+                    "aiSeq": live.get("seq") if live is not None else None,
+                    "aiDone": live.get("analyzed") if live is not None else None,
                 }
             )
 
@@ -567,74 +631,119 @@ def _create_main_window(config: DesktopUIConfig):
                 self._ai_paused = False
             elif self._ai_paused:
                 return False
-            if self._ai_thread is not None:
+            if self._ai_running:
                 return False
             if self._sync_thread is not None:
                 return False
-            order, force_listing_ids = _analysis_order_for_run(
+            pending_order, force_listing_ids = _analysis_order_for_run(
                 config.database_path,
                 tuple(self._ai_queue_order),
                 frozenset(self._ai_reanalysis_ids),
             )
-            order = tuple(listing_id for listing_id in order if listing_id not in self._ai_attempted_ids)
+            # Scope analysis to the listings under the current filters/tab, kept in
+            # the on-screen ranked order. Fall back to the full pending set only
+            # when no view has been loaded yet.
+            pending_set = set(pending_order)
+            scope = self._view_listing_ids or pending_order
+            order = tuple(
+                listing_id
+                for listing_id in scope
+                if listing_id in pending_set and listing_id not in self._ai_attempted_ids
+            )
+            order_set = set(order)
             force_listing_ids = frozenset(
-                listing_id for listing_id in force_listing_ids if listing_id in set(order)
+                listing_id for listing_id in force_listing_ids if listing_id in order_set
             )
             if not order:
                 self._ai_auto_timer.stop()
                 return False
             self._ai_queue_order = list(order)
             self._ai_reanalysis_ids = set(force_listing_ids)
-            chunk = order[:AUTO_ANALYSIS_CHUNK]
-            chunk_set = set(chunk)
-            chunk_force = frozenset(
-                listing_id for listing_id in force_listing_ids if listing_id in chunk_set
-            )
-            self._set_pipeline_status({"stage": "ai_prepare", "current": 0, "total": len(chunk)})
+            self._set_pipeline_status({"stage": "ai_prepare", "current": 0, "total": len(order)})
             self._emit_pipeline_status_now()
 
-            thread = QThread(self)
-            worker = AIQueueWorker(
-                config.database_path,
-                self._profile_key,
-                chunk,
-                chunk_force,
+            progress_state = AIProgressState(
+                [(listing_id, listing_id in force_listing_ids) for listing_id in order]
             )
-            worker.moveToThread(thread)
-            thread.started.connect(lambda: logger.info("UI AI queue thread started"))
-            thread.started.connect(worker.run)
-            worker.progress.connect(self._on_pipeline_progress)
-            worker.finished.connect(lambda result, attempted=chunk, forced=chunk_force: self._on_ai_finished(result, attempted, forced))
-            worker.failed.connect(lambda message, attempted=chunk: self._on_ai_failed(message, attempted))
-            worker.finished.connect(thread.quit)
-            worker.failed.connect(thread.quit)
-            worker.finished.connect(worker.deleteLater)
-            worker.failed.connect(worker.deleteLater)
-            thread.finished.connect(lambda: logger.info("UI AI queue thread finished"))
-            thread.finished.connect(thread.deleteLater)
-            thread.finished.connect(self._clear_ai_thread)
-            self._ai_thread = thread
-            self._ai_worker = worker
-            logger.info("UI bridge starting AI queue chunk: chunk=%s remaining=%s", len(chunk), len(order))
-            thread.start()
+            self._ai_progress_state = progress_state
+            self._ai_run_order = order
+
+            lane_count = min(_ai_concurrency(), len(order))
+            self._ai_lane_threads = []
+            self._ai_lanes = []
+            self._ai_lanes_remaining = lane_count
+            self._ai_running = True
+            for _lane_index in range(lane_count):
+                thread = QThread(self)
+                lane = AILaneWorker(config.database_path, self._profile_key, progress_state)
+                lane.moveToThread(thread)
+                thread.started.connect(lane.run)
+                lane.finished.connect(self._on_lane_finished)
+                lane.finished.connect(thread.quit)
+                lane.finished.connect(lane.deleteLater)
+                thread.finished.connect(thread.deleteLater)
+                # Keep strong refs to both thread and lane; otherwise the lane
+                # QObject is garbage-collected before it runs and the app crashes.
+                self._ai_lane_threads.append(thread)
+                self._ai_lanes.append(lane)
+                thread.start()
+            logger.info(
+                "UI bridge starting AI queue: queued=%s lanes=%s", len(order), lane_count
+            )
             return True
 
-        def _on_ai_finished(
-            self,
-            result: ListingProcessingResult,
-            attempted_ids: tuple[int, ...],
-            force_listing_ids: frozenset[int],
-        ) -> None:
-            logger.info("UI bridge AI queue chunk finished signal: %s", result)
-            processed_ids = attempted_ids[: max(0, result.ai.checked_count)]
-            self._ai_attempted_ids.update(processed_ids)
-            self._ai_reanalysis_ids.difference_update(force_listing_ids.intersection(processed_ids))
+        @Slot()
+        def _on_lane_finished(self) -> None:
+            self._ai_lanes_remaining -= 1
+            if self._ai_lanes_remaining > 0:
+                return
+            # All lanes drained the queue.
+            self._ai_lane_threads = []
+            self._ai_lanes = []
+            self._ai_running = False
+            state = self._ai_progress_state
+            done, analyzed, failed = state.totals() if state is not None else (0, 0, 0)
+            cancelled = state.cancelled() if state is not None else False
+            self._ai_attempted_ids.update(self._ai_run_order)
+            self._ai_progress_state = None
+            self._on_ai_run_complete(analyzed, failed, cancelled)
+
+        def _ai_live_status(self) -> dict[str, object] | None:
+            """Build the live "currently analyzing" status from the shared state.
+
+            Read on demand when the web UI polls syncStatus(), so there are no
+            Python->JS pushes during analysis (those destabilise QWebChannel).
+            """
+            state = self._ai_progress_state
+            if state is None:
+                return None
+            snap = state.snapshot()
+            analyzing = snap["analyzing"]
+            primary = analyzing[0] if analyzing else {"listingId": None, "listing": ""}
+            return {
+                "stage": "ai",
+                "current": snap["done"],
+                "total": snap["total"],
+                "analyzed": snap["done"],
+                "analyzing": analyzing,
+                "listing": primary["listing"],
+                "listingId": primary["listingId"],
+                "seq": snap["seq"],
+            }
+
+        def _on_ai_run_complete(self, analyzed: int, failed: int, cancelled: bool) -> None:
+            logger.info(
+                "UI bridge AI run complete: analyzed=%s failed=%s cancelled=%s",
+                analyzed,
+                failed,
+                cancelled,
+            )
             self._scored.clear()
             self._scored.add(self._profile_key)
-            self._ai_session_analyzed += result.ai.analyzed_count
-            self._ai_session_failed += result.ai.failed_count
+            self._ai_session_analyzed += analyzed
+            self._ai_session_failed += failed
 
-            if result.ai.cancelled:
+            if cancelled:
                 self._ai_paused = True
                 self._set_pipeline_status(
                     {
@@ -675,16 +784,6 @@ def _create_main_window(config: DesktopUIConfig):
             )
             self._ai_session_analyzed = 0
             self._ai_session_failed = 0
-
-        def _on_ai_failed(self, message: str, attempted_ids: tuple[int, ...]) -> None:
-            logger.error("UI bridge AI queue failed signal: %s", message)
-            self._ai_attempted_ids.update(attempted_ids)
-            self._ai_paused = True
-            self._ai_session_analyzed = 0
-            self._ai_session_failed = 0
-            self._set_pipeline_status({"stage": "failed", "message": message})
-            self._emit_pipeline_status_now()
-            self.aiFailed.emit(message)
 
         def _has_pending_analysis(self) -> bool:
             order, _ = _analysis_order_for_run(
@@ -736,11 +835,6 @@ def _create_main_window(config: DesktopUIConfig):
             logger.info("UI bridge clearing sync thread state")
             self._sync_thread = None
             self._sync_worker = None
-
-        def _clear_ai_thread(self) -> None:
-            logger.info("UI bridge clearing AI queue thread state")
-            self._ai_thread = None
-            self._ai_worker = None
 
         def _arm_ai_auto_timer(self) -> None:
             if not self._ai_auto_timer.isActive():
@@ -807,6 +901,7 @@ def _create_main_window(config: DesktopUIConfig):
             )
 
             self.view = QWebEngineView()
+            self.view.setPage(LoggingWebEnginePage(self.view))
             settings = self.view.settings()
             settings.setAttribute(
                 QWebEngineSettings.WebAttribute.LocalContentCanAccessRemoteUrls, True
@@ -817,6 +912,13 @@ def _create_main_window(config: DesktopUIConfig):
 
             self.bridge = UiBridge()
             self.bridge.pipelineProgress.connect(self._force_sync_strip_update)
+            # scoresReady is also exposed to JS over QWebChannel, but that signal
+            # can be missed: a launch recalc finishes within tens of milliseconds,
+            # often before the JS-side channel connection is registered, leaving
+            # the progress indicator stuck on. This in-process Qt connection plus
+            # runJavaScript is edge-triggered and reliable, so the UI always
+            # refreshes (and drops the busy bar) once scores are ready.
+            self.bridge.scoresReady.connect(self._push_soft_refresh)
             self.channel = QWebChannel(self.view.page())
             self.channel.registerObject("bridge", self.bridge)
             self.view.page().setWebChannel(self.channel)
@@ -847,6 +949,13 @@ def _create_main_window(config: DesktopUIConfig):
             self.view.load(QUrl.fromLocalFile(str(WEB_DIR / "index.html")))
 
         @Slot(str)
+        def _push_soft_refresh(self, _key: str = "") -> None:
+            self.view.page().runJavaScript(
+                "(() => { if (window.__flatSearcherSoftRefresh) {"
+                " try { window.__flatSearcherSoftRefresh(); } catch (error) {} } })();"
+            )
+
+        @Slot(str)
         def _force_sync_strip_update(self, payload_json: str) -> None:
             self._apply_native_sync_payload_json(payload_json)
             # The web app receives progress through the QWebChannel signal, but on
@@ -868,7 +977,7 @@ def _create_main_window(config: DesktopUIConfig):
 
         def _refresh_native_sync_strip(self) -> None:
             status = self.bridge._latest_pipeline_status
-            busy = self.bridge._sync_thread is not None or self.bridge._ai_thread is not None
+            busy = self.bridge._sync_thread is not None or self.bridge._ai_running
             payload_json = _dumps(status) if isinstance(status, dict) else "null"
             current_key = f"{int(busy)}:{payload_json}"
             if current_key != self._native_sync_last_json:
@@ -879,14 +988,25 @@ def _create_main_window(config: DesktopUIConfig):
                 self._native_sync_was_busy = False
                 if not self._native_sync_reload_pending:
                     self._native_sync_reload_pending = True
-                    self._set_native_status_text("Pipeline finished. Refreshing listings...")
+                    self._set_native_status_text("Updating results...")
                     QTimer.singleShot(250, self._reload_after_native_sync)
             elif busy:
                 self._native_sync_was_busy = True
 
         def _reload_after_native_sync(self) -> None:
             self._native_sync_reload_pending = False
-            self.view.reload()
+            # Refresh the listing data *in place* instead of reloading the whole
+            # web view. A full reload re-boots the JS app, which flickers and
+            # throws the user back to the top of the list. This is especially
+            # disruptive because the AI queue runs in repeated chunks, so the
+            # pipeline goes busy->idle many times in a single analysis session.
+            # runJavaScript reaches the page reliably even on QWebEngine builds
+            # where QWebChannel signals are delivered late, so it doubles as the
+            # guaranteed fallback for the soft refresh.
+            self.view.page().runJavaScript(
+                "(() => { if (window.__flatSearcherSoftRefresh) {"
+                " try { window.__flatSearcherSoftRefresh(); } catch (error) {} } })();"
+            )
             QTimer.singleShot(2500, lambda: self._set_native_status_text(""))
 
         def _set_native_status_text(self, text: str) -> None:
@@ -899,7 +1019,7 @@ def _create_main_window(config: DesktopUIConfig):
                 payload = json.loads(payload_json) if payload_json else None
             except json.JSONDecodeError:
                 payload = None
-            busy = self.bridge._sync_thread is not None or self.bridge._ai_thread is not None
+            busy = self.bridge._sync_thread is not None or self.bridge._ai_running
             self._apply_native_sync_status(payload if isinstance(payload, dict) else None, busy)
 
         def _apply_native_sync_status(self, status: dict[str, object] | None, busy: bool) -> None:
@@ -1006,6 +1126,19 @@ def _sync_status_display(status: dict[str, object], language: str) -> tuple[str,
     if stage == "failed":
         return str(status.get("message") or translate(language, "status.failed")), "", False
     return "", "", True
+
+
+def _ai_concurrency() -> int:
+    """How many listings to analyze at once. Defaults to 2 (two independent
+    Gemini analyses in parallel — quality is unchanged, only throughput).
+    Override with FLAT_SEARCHER_AI_CONCURRENCY."""
+    import os
+
+    raw = os.environ.get("FLAT_SEARCHER_AI_CONCURRENCY", "2")
+    try:
+        return max(1, min(8, int(raw)))
+    except ValueError:
+        return 2
 
 
 def _build_ui_analysis_provider(config: AppConfig) -> AIAnalysisProvider:

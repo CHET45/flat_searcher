@@ -69,6 +69,13 @@ html, body {
   white-space: nowrap;
   direction: ltr;
   user-select: none;
+  /* Icons are ligatures of their lowercase name (e.g. "trending_up"). Many of
+     them live inside uppercased containers (.caps, .tbtn, table headers); the
+     inherited text-transform would rewrite the ligature text to "TRENDING_UP",
+     which no longer matches, so the raw name renders instead of the glyph.
+     Pin the transform off so icons always resolve. */
+  text-transform: none;
+  font-style: normal;
 }
 .fill { font-variation-settings: "FILL" 1, "wght" 400; }
 
@@ -92,6 +99,23 @@ input, select, textarea { font-family: inherit; }
   backdrop-filter: blur(3px);
 }
 .app-loading[hidden] { display: none; }
+
+/* Non-blocking progress indicator: a thin animated bar pinned to the top edge.
+   pointer-events:none so the user can keep working while data loads. */
+.app-busy-bar {
+  position: fixed; top: 0; left: 0; right: 0; height: 3px; z-index: 1200;
+  pointer-events: none;
+  background: linear-gradient(90deg, transparent 0%, var(--primary) 50%, transparent 100%);
+  background-size: 35% 100%;
+  background-repeat: no-repeat;
+  animation: appBusySlide 1.15s ease-in-out infinite;
+}
+.app-busy-bar[hidden] { display: none; }
+@keyframes appBusySlide {
+  0% { background-position: -35% 0; }
+  100% { background-position: 135% 0; }
+}
+
 .app-loading-card {
   min-width: 280px; max-width: 420px; padding: 18px 20px;
   border: 1px solid var(--outline-variant); border-radius: var(--radius-xl);

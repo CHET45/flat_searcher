@@ -192,6 +192,19 @@ def _str_tuple(value: Any) -> tuple[str, ...]:
 
 
 def _room_groups(value: Any) -> dict[str, tuple[str, ...]]:
+    # Accept both a plain {room: [image_ids]} object and the structured-output
+    # array form [{"room": ..., "image_ids": [...]}, ...] that Gemini emits,
+    # because controlled generation cannot express free-form maps.
+    if isinstance(value, list | tuple):
+        groups: dict[str, tuple[str, ...]] = {}
+        for item in value:
+            if not isinstance(item, dict):
+                raise AIValidationError("Expected image_groups_by_room entries to be objects")
+            room = item.get("room")
+            if not isinstance(room, str) or not room.strip():
+                raise AIValidationError("Expected image_groups_by_room entry room name")
+            groups[room.strip()] = _str_tuple(item.get("image_ids", ()))
+        return groups
     if not isinstance(value, dict):
         raise AIValidationError("Expected image_groups_by_room object")
     return {str(key): _str_tuple(group) for key, group in value.items()}

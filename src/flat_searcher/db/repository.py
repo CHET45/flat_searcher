@@ -25,6 +25,13 @@ def open_database(database_path: Path) -> Iterator[sqlite3.Connection]:
     connection = sqlite3.connect(database_path, timeout=30.0)
     connection.row_factory = sqlite3.Row
     connection.execute("PRAGMA busy_timeout = 30000")
+    # WAL lets the UI thread read (e.g. loadView) without being blocked by a
+    # background writer such as a score recalculation or AI analysis run. Without
+    # it, a reader can stall behind the writer's commit and freeze the GUI.
+    try:
+        connection.execute("PRAGMA journal_mode = WAL")
+    except sqlite3.DatabaseError:
+        pass
     connection.execute("PRAGMA foreign_keys = ON")
     try:
         yield connection

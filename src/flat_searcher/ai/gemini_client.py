@@ -40,7 +40,12 @@ class GeminiModelClient:
         self.max_attempts = max(1, max_attempts)
         self.retry_delay_seconds = max(0.0, retry_delay_seconds)
 
-    def generate_text(self, prompt: str, image_paths: tuple[Path, ...] = ()) -> str:
+    def generate_text(
+        self,
+        prompt: str,
+        image_paths: tuple[Path, ...] = (),
+        response_schema: dict[str, object] | None = None,
+    ) -> str:
         contents = []
         for image_path in image_paths:
             image_bytes = image_path.read_bytes()
@@ -52,16 +57,20 @@ class GeminiModelClient:
             )
         contents.append(prompt)
 
+        config_kwargs: dict[str, object] = {
+            "response_mime_type": "application/json",
+            "temperature": 0.1,
+        }
+        if response_schema is not None:
+            config_kwargs["response_schema"] = response_schema
+
         last_error: Exception | None = None
         for attempt in range(1, self.max_attempts + 1):
             try:
                 response = self.client.models.generate_content(
                     model=self.model,
                     contents=contents,
-                    config=self.types.GenerateContentConfig(
-                        response_mime_type="application/json",
-                        temperature=0.1,
-                    ),
+                    config=self.types.GenerateContentConfig(**config_kwargs),
                 )
                 if not response.text:
                     raise GeminiResponseError("Gemini returned an empty response.")

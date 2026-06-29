@@ -69,6 +69,43 @@ class ScoreRecalculationService:
                 scored_count=scored_count,
             )
 
+    def recalculate_one(
+        self,
+        listing_id: int,
+        profile_key: str = "for_living_mortgage",
+    ) -> bool:
+        """Re-score a single listing against the current market.
+
+        Used for live, per-listing updates while analysis streams in. One
+        listing barely moves the market medians, so re-scoring just the changed
+        listing (instead of all of them) is cheap and keeps the ranking fresh
+        without an O(N^2) full pass after every analysis. A periodic full
+        ``recalculate`` still corrects any accumulated drift.
+        """
+        with open_database(self.database_path) as connection:
+            profile_repository = ProfileRepository(connection)
+            profile = profile_repository.load_profile(profile_key)
+            if profile is None:
+                raise ValueError(f"Unknown scoring profile: {profile_key}")
+
+            repository = ScoringRepository(connection)
+            listings = repository.load_active_listings()
+            target = next(
+                (item for item in listings if item.listing_id == listing_id), None
+            )
+            if target is None:
+                return False
+            market_listings = tuple(_market_listing(item) for item in listings)
+            median_area = _median_area(listings)
+
+            price_value = calculate_price_value(_market_listing(target), market_listings)
+            blocks = _block_scores(target, price_value.price_value_score, median_area)
+            result = calculate_weighted_score(profile, blocks)
+            calculated_at = _now()
+            repository.save_price_value_result(target.listing_id, price_value, calculated_at)
+            repository.save_score_result(target.listing_id, result, calculated_at)
+            return result.overall_score is not None
+
 
 def _block_scores(
     listing: ListingForScoring,

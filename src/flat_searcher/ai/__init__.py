@@ -12,6 +12,7 @@ from flat_searcher.ai.pipeline import (
     Pass2PipelineResult,
 )
 from flat_searcher.ai.prompts import ImagePromptInput, build_pass1_prompt, build_pass2_prompt
+from flat_searcher.ai.response_schemas import PASS1_RESPONSE_SCHEMA, PASS2_RESPONSE_SCHEMA
 from flat_searcher.ai.schemas import (
     AIValidationError,
     ClassifiedImage,
@@ -34,6 +35,8 @@ __all__ = [
     "ImagePromptInput",
     "LayoutConfidenceLabel",
     "MortgageRiskLevel",
+    "PASS1_RESPONSE_SCHEMA",
+    "PASS2_RESPONSE_SCHEMA",
     "Pass1ImageAnalysis",
     "Pass1PipelineResult",
     "Pass2ListingAnalysis",

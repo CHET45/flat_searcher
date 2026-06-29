@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+import logging
 from dataclasses import dataclass, field
 from datetime import UTC, datetime
 from pathlib import Path
@@ -17,6 +18,8 @@ from flat_searcher.ai import (
 from flat_searcher.ai.json_io import parse_ai_json_object
 from flat_searcher.db.ai_repository import AIAnalysisRepository, ListingForAnalysis
 from flat_searcher.db.repository import open_database
+
+logger = logging.getLogger(__name__)
 
 
 @dataclass(frozen=True)
@@ -138,6 +141,54 @@ class AIAnalysisService:
                 progress_callback,
                 should_cancel,
             )
+
+    def analyze_single(
+        self,
+        listing_id: int,
+        analysis_version: str,
+        force: bool = False,
+        on_started: Callable[[ListingForAnalysis], None] | None = None,
+    ) -> tuple[ListingForAnalysis, bool] | None:
+        """Analyze one listing and persist the result.
+
+        Returns ``(listing, ok)`` where ``ok`` is True on success, or ``None`` if
+        the listing is no longer pending (e.g. already analyzed). Each call uses
+        its own short-lived connection so it is safe to run many in parallel.
+        """
+        with open_database(self.database_path) as connection:
+            listings = AIAnalysisRepository(connection).load_pending_listings(
+                listing_id=listing_id, limit=1, force=force
+            )
+        if not listings:
+            return None
+        listing = listings[0]
+        if on_started is not None:
+            on_started(listing)
+        try:
+            analysis = self.provider.analyze(listing)
+            _validate_provider_result(listing, analysis)
+            with open_database(self.database_path) as connection:
+                AIAnalysisRepository(connection).save_finished_analysis(
+                    listing_id=listing.listing_id,
+                    analysis_version=analysis_version,
+                    analyzed_at=_now(),
+                    pass1_raw_json=analysis.pass1_raw,
+                    pass1_analysis=analysis.pass1_analysis,
+                    pass2_raw_json=analysis.pass2_raw,
+                    pass2_analysis=analysis.pass2_analysis,
+                    image_content_hashes=analysis.image_content_hashes,
+                    floor_plan_paths=analysis.floor_plan_paths,
+                )
+            return listing, True
+        except Exception as error:
+            logger.exception("analyze_single failed for listing %s", listing.listing_id)
+            with open_database(self.database_path) as connection:
+                AIAnalysisRepository(connection).save_failed_analysis(
+                    listing_id=listing.listing_id,
+                    analysis_version=analysis_version,
+                    error_message=str(error),
+                )
+            return listing, False
 
     def _analyze_listings(
         self,
