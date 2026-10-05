@@ -17,6 +17,7 @@ _SECTIONS: dict[str, frozenset[str]] = {
     "price": frozenset({"max_eur", "bands"}),
     "rooms": frozenset({"order"}),
     "floor": frozenset({"exclude"}),
+    "surroundings": frozenset({"gym_walk_max_min"}),
     "building": frozenset({"excluded_types"}),
     "heating": frozenset({"exclude_stove"}),
     "transit": frozenset(
@@ -75,6 +76,7 @@ class Criteria:
     targets: tuple[Target, ...]
     today: TodayRules = TodayRules()
     excluded_floors: frozenset[int] = frozenset()
+    gym_walk_max_min: int | None = None
 
     def band_index(self, price: float) -> int | None:
         if price > self.max_eur:
@@ -122,6 +124,7 @@ def parse_criteria(text: str) -> Criteria:
         targets=tuple(_target(target) for target in transit.get("targets", [])),
         today=_today(_section(data, "today")),
         excluded_floors=_floors(_section(data, "floor").get("exclude", [])),
+        gym_walk_max_min=_minutes(_section(data, "surroundings").get("gym_walk_max_min"), "surroundings.gym_walk_max_min"),
     )
 
 
@@ -154,6 +157,12 @@ def _today(section: Mapping[str, Any]) -> TodayRules:
             section.get("exclude_illegal_replanning", defaults.exclude_illegal_replanning)
         ),
     )
+
+
+def _minutes(value: Any, key: str) -> int | None:
+    if value is not None and (not isinstance(value, int) or value <= 0):
+        raise CriteriaError(f"{key} must be a positive integer")
+    return value
 
 
 def _floors(floors: Any) -> frozenset[int]:

@@ -23,7 +23,7 @@ from flat_searcher.shortlist.facts import (
 WEAR_GROUPS = ("V1", "V2", "V3", "V4", "V5")
 NEW_BUILD = "new build"
 UNKNOWN_WEAR = 3
-GATES = ("price", "rooms", "floor", "building_type", "stove", "share")
+GATES = ("price", "rooms", "floor", "building_type", "stove", "share", "gym")
 
 
 @dataclass(frozen=True)
@@ -43,6 +43,7 @@ class Evaluation:
     precision: str | None = None
     price_ratio: float | None = None
     building: Mapping[str, Any] = field(default_factory=dict)
+    surroundings: Mapping[str, Any] = field(default_factory=dict)
 
     @property
     def reached(self) -> int:
@@ -69,6 +70,7 @@ def evaluate(
         "building_type": core.get("building_type") in criteria.excluded_types,
         "stove": criteria.exclude_stove and heating.value == "stove",
         "share": share.value == "yes",
+        "gym": _too_far_from_a_gym((transit or {}).get("surroundings"), criteria.gym_walk_max_min),
     }
     rejected = next((gate for gate in GATES if checks[gate]), None)
     rooms_index = (
@@ -90,6 +92,7 @@ def evaluate(
         precision=(transit or {}).get("precision"),
         price_ratio=_price_ratio(record),
         building=dict((transit or {}).get("building") or {}),
+        surroundings=dict((transit or {}).get("surroundings") or {}),
     )
 
 
@@ -104,6 +107,18 @@ def sort_key(evaluation: Evaluation) -> tuple[Any, ...]:
         price,
         evaluation.ss_id,
     )
+
+
+def nearest_minutes(surroundings: Mapping[str, Any], mode: str, category: str) -> int | None:
+    found = ((surroundings.get(mode) or {}).get(category)) or []
+    return min((int(place["min"]) for place in found), default=None)
+
+
+def _too_far_from_a_gym(surroundings: Mapping[str, Any] | None, limit: int | None) -> bool:
+    if limit is None or not surroundings or "walk" not in surroundings:
+        return False
+    nearest = nearest_minutes(surroundings, "walk", "gym")
+    return nearest is None or nearest > limit
 
 
 def wear_group(building: Mapping[str, Any]) -> int:

@@ -7,7 +7,9 @@ from dataclasses import dataclass
 
 from flat_searcher.shortlist.criteria import TodayRules
 from flat_searcher.shortlist.alerts import suspicion_flags
-from flat_searcher.shortlist.rank import Evaluation, total_expected_minutes, wear_group
+from flat_searcher.shortlist.rank import Evaluation, nearest_minutes, total_expected_minutes, wear_group
+
+GROCERY_CAP_MIN = 30
 
 
 @dataclass(frozen=True)
@@ -38,7 +40,7 @@ def pick_today(
 
 def _scores(
     item: Evaluation, rules: TodayRules, target_names: Sequence[str]
-) -> tuple[float, float, float, float] | None:
+) -> tuple[float, ...] | None:
     core = item.record.get("core") or {}
     price, area = core.get("price_eur"), core.get("area_m2")
     minutes = total_expected_minutes(item.journeys, target_names)
@@ -53,7 +55,14 @@ def _scores(
         or suspicion_flags(item)
     ):
         return None
-    return (float(price), minutes, -float(area), float(wear_group(item.building)))
+    grocery = nearest_minutes(item.surroundings, "walk", "grocery")
+    return (
+        float(price),
+        minutes,
+        -float(area),
+        float(wear_group(item.building)),
+        float(min(grocery, GROCERY_CAP_MIN) if grocery is not None else GROCERY_CAP_MIN),
+    )
 
 
 def _beats(a: tuple[float, ...], b: tuple[float, ...]) -> bool:

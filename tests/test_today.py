@@ -15,7 +15,8 @@ def _option(minutes: int, every: int = 10) -> dict:
 
 
 def _flat(ss_id: str, price: int = 35000, minutes: int = 25, area: float = 50, floor: int = 3,
-          description: str = "", ratio: float = 1.0, campus: list | None = None, building: dict | None = None):
+          description: str = "", ratio: float = 1.0, campus: list | None = None, building: dict | None = None,
+          grocery: int | None = None):
     record = {
         "ss_id": ss_id,
         "status": "active",
@@ -27,6 +28,8 @@ def _flat(ss_id: str, price: int = 35000, minutes: int = 25, area: float = 50, f
                            "campus": [_option(minutes)] if campus is None else campus}}
     if building is not None:
         transit["building"] = building
+    if grocery is not None:
+        transit["surroundings"] = {"walk": {"grocery": [{"name": "shop", "min": grocery}]}}
     return evaluate(record, CRITERIA, transit)
 
 
@@ -85,3 +88,7 @@ class TodayTests(TestCase):
         self.assertEqual(_picks(flats), [("new", 1), ("sound", 2), ("unknown", 3), ("worn", 4)])
         cheaper_but_worn = [_flat("worn", price=30000, building={"wear": "V4"}), _flat("sound", building={"wear": "V2"})]
         self.assertEqual(_picks(cheaper_but_worn), [("worn", 1), ("sound", 1)])
+
+    def test_a_grocery_close_on_foot_beats_a_far_one_and_none_counts_as_far(self) -> None:
+        flats = [_flat("far", grocery=25), _flat("near", grocery=4), _flat("none")]
+        self.assertEqual(_picks(flats), [("near", 1), ("far", 2), ("none", 3)])

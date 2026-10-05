@@ -16,6 +16,8 @@ excluded_types = ["Koka"]
 exclude_stove = true
 [floor]
 exclude = [1]
+[surroundings]
+gym_walk_max_min = 15
 """
 )
 
@@ -86,6 +88,15 @@ class GateTests(TestCase):
         self.assertRejected(_record("ground", floor=1), "floor")
         self.assertRejected(_record("second", floor=2), None)
         self.assertRejected(_record("unknown", floor=None), None)
+
+    def test_a_located_flat_needs_a_gym_within_the_walk(self) -> None:
+        def gyms(*minutes: int) -> dict:
+            return {"precision": "exact", "targets": {},
+                    "surroundings": {"walk": {"gym": [{"name": "g", "min": m} for m in minutes]}}}
+        self.assertEqual(evaluate(_record("near"), CRITERIA, gyms(9, 20)).rejected, None)
+        self.assertEqual(evaluate(_record("far"), CRITERIA, gyms(16)).rejected, "gym")
+        self.assertEqual(evaluate(_record("none"), CRITERIA, gyms()).rejected, "gym")
+        self.assertEqual(evaluate(_record("unknown"), CRITERIA, {"precision": "exact", "targets": {}}).rejected, None)
 
     def test_first_failing_gate_is_the_reason(self) -> None:
         self.assertRejected(_record("x", price=90000, rooms=4, building_type="Koka"), "price")

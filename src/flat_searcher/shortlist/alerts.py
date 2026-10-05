@@ -15,6 +15,14 @@ WEAR_ALERTS = {
     "V4": "building wear V4, unsatisfactory: check with the bank",
     "V5": "building wear V5, critical",
 }
+NUISANCE_ALERTS = {
+    "industrial": ("industrial zone", 150),
+    "works": ("factory", 150),
+    "cemetery": ("cemetery", 100),
+    "bog": ("bog", 500),
+    "landfill": ("landfill", 2000),
+    "wastewater": ("sewage plant", 1500),
+}
 HEATING_ALERTS = {
     "own_boiler": "heating: own boiler",
     "house_boiler": "heating: the house's own boiler room",
@@ -51,8 +59,15 @@ def alerts_for(item: Evaluation) -> list[Alert]:
         red.append(Alert("red", f"mortgage risk {judgment['mortgage_risk']}{said}"))
     if item.heating.value in HEATING_ALERTS:
         amber.append(_alert("amber", HEATING_ALERTS[item.heating.value], item.heating))
+    for kind, near in (item.surroundings.get("around") or {}).items():
+        if kind in NUISANCE_ALERTS and near["m"] <= NUISANCE_ALERTS[kind][1]:
+            amber.append(Alert("amber", f"{NUISANCE_ALERTS[kind][0]} {distance_label(near['m'])}"))
     amber.extend(Alert("amber", text) for text in suspicion_flags(item))
     return red + amber
+
+
+def distance_label(metres: float) -> str:
+    return f"{round(metres)} m" if metres < 1000 else f"{metres / 1000:.1f} km"
 
 
 def suspicion_flags(item: Evaluation) -> list[str]:

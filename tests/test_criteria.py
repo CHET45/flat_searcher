@@ -41,6 +41,9 @@ exclude_illegal_replanning = false
 [floor]
 exclude = [1, 0]
 
+[surroundings]
+gym_walk_max_min = 12
+
 [[transit.targets]]
 name = "office"
 address = "Example iela 1"
@@ -73,6 +76,7 @@ class ParseCriteriaTests(TestCase):
         )
         self.assertEqual(criteria.today, TodayRules(12, 110, False, False, False))
         self.assertEqual(criteria.excluded_floors, frozenset({0, 1}))
+        self.assertEqual(criteria.gym_walk_max_min, 12)
 
     def test_band_index_follows_preference_order_and_half_open_bounds(self) -> None:
         criteria = parse_criteria(SKETCH)
@@ -96,6 +100,7 @@ class ParseCriteriaTests(TestCase):
         self.assertEqual(criteria.targets, ())
         self.assertEqual(criteria.today, TodayRules(20, None, True, True, True))
         self.assertEqual(criteria.excluded_floors, frozenset())
+        self.assertIsNone(criteria.gym_walk_max_min)
 
     def test_unknown_keys_are_errors_that_name_the_key(self) -> None:
         with self.assertRaisesRegex(CriteriaError, "max_price"):

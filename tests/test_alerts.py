@@ -8,7 +8,7 @@ CRITERIA = parse_criteria("[price]\nmax_eur = 100000\n")
 
 
 def _alerts(description: str = "", area: float = 50, ratio: float = 1.0, judgment: dict | None = None,
-            series: str = "P. kara", building: dict | None = None) -> list[Alert]:
+            series: str = "P. kara", building: dict | None = None, around: dict | None = None) -> list[Alert]:
     record = {
         "ss_id": "x",
         "status": "active",
@@ -18,7 +18,8 @@ def _alerts(description: str = "", area: float = 50, ratio: float = 1.0, judgmen
         "market": {"price_per_m2": 1000 * ratio, "district_median_price_per_m2": 1000},
         "judgment": judgment or {},
     }
-    transit = {"precision": "exact", "targets": {}, "building": building} if building else None
+    transit = {"precision": "exact", "targets": {}, "building": building or {},
+               "surroundings": {"around": around or {}}} if building or around else None
     return alerts_for(evaluate(record, CRITERIA, transit))
 
 
@@ -70,6 +71,13 @@ class AlertTests(TestCase):
         self.assertEqual(_texts(_alerts(building={"wear": "V5"})), [("red", "building wear V5, critical")])
         self.assertEqual(_alerts(building={"wear": "V3"}), [])
         self.assertEqual(_alerts(building={"note": "new build"}), [])
+
+    def test_a_close_nuisance_is_amber_and_a_farther_one_is_not(self) -> None:
+        around = {"industrial": {"name": "", "m": 120}, "cemetery": {"name": "Meža kapi", "m": 400},
+                  "landfill": {"name": "Getliņi", "m": 1800}, "bog": {"name": "", "m": 900}}
+        self.assertEqual(_texts(_alerts(around=around)),
+                         [("amber", "industrial zone 120 m"), ("amber", "landfill 1.8 km")])
+        self.assertEqual(_alerts(around={"industrial": {"name": "", "m": 151}}), [])
 
     def test_red_comes_before_amber(self) -> None:
         alerts = _alerts("Autonoma gāzes apkure. Zeme zem mājas ir nomā.", area=18)
