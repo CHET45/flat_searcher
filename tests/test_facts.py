@@ -6,6 +6,7 @@ from flat_searcher.shortlist.facts import (
     hot_water_fact,
     land_fact,
     layout_fact,
+    replanning_fact,
     sells_share,
     stove_fact,
 )
@@ -269,6 +270,79 @@ class HotWaterFactTests(TestCase):
             "izmantojot centralizēto gāzes katlu.",
             "central",
         )
+
+
+class ReplanningFactTests(TestCase):
+    def assertReplanning(self, description: str, value: str, series: str = "P. kara") -> None:
+        fact = replanning_fact(_flat(description, series=series))
+        self.assertEqual(fact.value, value, description)
+        self.assertEqual(bool(fact.evidence), value != "none", description)
+
+    def test_legalised_replanning(self) -> None:
+        self.assertReplanning("Pārplānojums ir saskaņots.", "legal")
+        self.assertReplanning("Pārbūve ir saskaņota.", "legal")
+        self.assertReplanning("Veikta saskaņota pārplānošana.", "legal")
+        self.assertReplanning("Sērijas mājā ar saskaņotu pārbūvi.", "legal")
+        self.assertReplanning("Официальная перепланировка.", "legal")
+        self.assertReplanning("Вся документация по перепланировке полностью оформлена.", "legal")
+        self.assertReplanning("Dzīvoklis ir pārplānots. Pārplānojums ir reģistrēts kadastrā.", "legal")
+        self.assertReplanning("Dzīvoklī ir veikta un apstiprināta pārplānošana.", "legal")
+
+    def test_replanning_that_is_not_legalised(self) -> None:
+        self.assertReplanning("Pārplānojums nav saskaņots.", "illegal")
+        self.assertReplanning("Pārbūve nav legalizēta, to vajadzēs jālegalizē.", "illegal")
+        self.assertReplanning("Перепланировка не узаконена.", "illegal")
+        self.assertReplanning("Veikta nesaskaņota pārbūve.", "illegal")
+
+    def test_replanning_without_a_legal_status(self) -> None:
+        self.assertReplanning("Dzīvoklis ir pilnībā pārplānots.", "unstated")
+        self.assertReplanning("Квартира отличается продуманной перепланировкой.", "unstated")
+        self.assertReplanning("Viesistaba apvienota ar virtuvi.", "unstated", series="103.")
+        self.assertReplanning("Гостиная объединена с кухней.", "unstated", series="602.")
+
+    def test_a_kitchen_open_to_the_living_room_is_the_design_of_a_new_build(self) -> None:
+        self.assertReplanning("Viesistaba apvienota ar virtuves zonu.", "none", series="Jaun.")
+        self.assertReplanning("Гостиная, объединённая с кухонной зоной.", "none", series="Renov.")
+
+    def test_possible_replanning_and_rebuilt_buildings_are_not_replanned_flats(self) -> None:
+        self.assertReplanning("Nepieciešamības gadījumā iespējama arī pārplānošana.", "none")
+        self.assertReplanning("Только одна несущая стена, что дает широкие возможности для перепланировки.", "none")
+        self.assertReplanning("Легко перепланируемая, тихая, светлая квартира.", "none")
+        self.assertReplanning("Mēs veicām ēku pārbūvi, lai nodrošinātu A klasi.", "none")
+        self.assertReplanning("Mazās istabas var apvienot ar virtuvi.", "none", series="103.")
+        self.assertReplanning("Kluss, saulains, viegli pārplānojams dzīvoklis.", "none")
+        self.assertReplanning("Varat veikt pārplānošanu un remontu tieši tā, kā esat iecerējuši.", "none")
+        self.assertReplanning("Кухню нужно перепланировать, выделив отдельное помещение для ванной.", "none")
+        self.assertReplanning("Pēc Latgales ielas un tramvaja infrastruktūras pārbūves apkārtne kļuvusi sakārtotāka.", "none")
+
+    def test_a_flat_said_to_have_no_replanning(self) -> None:
+        self.assertReplanning("Dzīvoklim nav veiktas pārbūves, kā arī nav parādu.", "none")
+        self.assertReplanning("Dzīvoklis ir bez pārplānošanas.", "none")
+        self.assertReplanning("Dzīvoklim nav nesaskaņotas pārbūves.", "none")
+        self.assertReplanning("Nav veikti nekādi nelegāli pārplānojumi vai pārbūves.", "none")
+        self.assertReplanning("Несогласованных перепланировок нет, планировка соответствует документам.", "none")
+        self.assertReplanning("Отсутствуют несогласованные перепланировки и другие обременения.", "none")
+        self.assertReplanning("Перепланировок нет, квартира соответствует документам.", "none")
+        self.assertReplanning("Официальная планировка – не перепланирована.", "none")
+        self.assertReplanning("Pārbūves nav veiktas.", "none")
+        self.assertReplanning("Нет долгов, перепланировка не проводилась, земля в собственности.", "none")
+        self.assertReplanning("Перепланировок не было, что подтверждается инвентаризационным делом.", "none")
+
+    def test_a_status_counts_only_when_it_speaks_of_the_replanning(self) -> None:
+        self.assertReplanning(
+            "Plānojums: viesistaba apvienota ar virtuves zonu; guļamistaba. Dzīvoklis reģistrēts zemesgrāmatā.",
+            "unstated",
+            series="LT proj.",
+        )
+        self.assertReplanning(
+            "+ Zeme īpašuma sastāvā, īpašums reģistrēts zemesgrāmatā; + dzīvoklis ir pārplānots ērtam plānojumam.",
+            "unstated",
+        )
+        self.assertReplanning("Dzīvoklis ir pārplānots. Tas ir saskaņots būvvaldē.", "legal")
+
+    def test_a_bathroom_joined_with_the_toilet_is_not_a_replanning(self) -> None:
+        self.assertReplanning("Vannas istaba apvienota ar WC.", "none", series="103.")
+        self.assertReplanning("Liela istaba, mājīga virtuve, apvienota vannas istaba un tualete.", "none", series="M. ģim.")
 
 
 class ShareFactTests(TestCase):

@@ -134,6 +134,50 @@ _STOVE_OBJECT = re.compile(
 )
 _REMOVED = re.compile(r"demontē\w*|\bbijusi\b|\bбыло\b|\bбыла\b|демонтир\w*")
 
+_REPLANNED = re.compile(
+    r"\bpārplān\w*|\bpārbūv\w*|\bперепланир\w*|\bперепланировк\w*|\breplann\w*|\b(?:layout\s+)?alterations?\b"
+)
+_KITCHEN_JOINED = re.compile(
+    r"\b(?:viesistab|dzīvojam\w*\s+istab|istab)\w*[^.;]{0,30}\bapvienot\w*\s+(?:ar\s+)?(?:\w+\s+)?virtuv\w*"
+    r"|\bvirtuv\w*[^.;]{0,20}\bapvienot\w*[^.;]{0,20}(?<!vannas )\b(?:viesistab|istab)\w*"
+    r"|\b(?:гостин|комнат)\w*[^.;]{0,20}\bобъедин\w*[^.;]{0,15}\bкухн\w*"
+    r"|\bкухн\w*[^.;]{0,15}\bобъедин\w*[^.;]{0,20}\b(?:гостин|комнат)\w*"
+    r"|\bliving\s+room\s+(?:is\s+)?combined\s+with\s+(?:the\s+)?kitchen|\bkitchen\s+(?:is\s+)?combined\s+with"
+)
+NEW_BUILD_SERIES = frozenset({"Jaun.", "Renov."})
+_NO_REPLANNING = re.compile(
+    r"\bnav\s+(?:veikt\w*\s+)?(?:nekād\w*\s+)?(?:ne\w+\s+)?(?:pārbūv|pārplān)\w*(?:\s+vai\s+(?:pārbūv|pārplān)\w*)?"
+    r"|\bbez\s+(?:\w+\s+)?(?:pārbūv|pārplān)\w*|\bбез\s+(?:\w+\s+)?перепланир\w*"
+    r"|\b(?:не\w+\s+)?перепланировок\s+нет\b|\bнет\s+(?:\w+\s+)?перепланировок"
+    r"|\bотсутству\w*\s+(?:\w+\s+)?перепланировк\w*|\bне\s+(?:было\s+(?:\w+\s+)?)?перепланир\w*"
+    r"|\bno\s+(?:unauthori[sz]ed\s+)?(?:replanning|alterations)"
+    r"|\b(?:pārbūv|pārplān)\w*\s+nav\s+(?:veikt|bijuš|bij)\w*"
+    r"|\bперепланир\w*\s+не\s+(?:проводил|было|был|делал)\w*|\bперепланировок\s+не\s+было"
+)
+_STATUS_REACH = 70
+_LIST_ITEM = re.compile(r";|\s[+•–-]\s")
+_REFERS_BACK = re.compile(r"^(?:tas|tā|tie|kas|это|она|оно|они|it|this)\b")
+_REPLAN_ONLY_POSSIBLE = re.compile(
+    r"\biespēj\w*|\bvar(?:at|ēs|ētu|ēsiet|i)?\b|\bpotenciāl\w*|\belastīg\w*|\bviegli\b|\bpārplānojam\w*"
+    r"|\bможно\b|\bвозможн\w*|\bлегко\b|\bнужно\b|\bнеобходимо\b|\boption\w*|\bpossib\w*|\bcould\b|\bcan\b"
+    r"|\bneed\w*"
+)
+_BUILDING_LEVEL = re.compile(
+    r"\bēk(?:a|as|u|ai|ā|ām|ās)\b|\bnam(?:s|a|u|ā)\b|\bздани\w*|\bbuildings?\b"
+    r"|\binfrastruktūr\w*|\biel(?:as|u|ā)\b|\bfasād\w*|\bjumt\w*"
+)
+_ILLEGAL = re.compile(
+    r"\bnesaskaņot\w*|\bnav\s+(?:\w+\s+)?(?:saskaņot|legalizēt|reģistrēt)\w*|\bjālegalizē\w*|\bnelegāl\w*"
+    r"|\bне\s*(?:узакон|согласован|оформлен)\w*|\bнеузакон\w*|\bнесогласован\w*|\bбез\s+разрешени\w*"
+    r"|\bнужно\s+узаконить|\bunauthori[sz]ed|\bnot\s+(?:legali[sz]ed|approved|registered)|\billegal\w*"
+)
+_LEGAL = re.compile(
+    r"\bsaskaņot\w*|\blegalizēt\w*|\blegāl\w*|\breģistrēt\w*|\bievadīt\w*\s+ekspluatācijā|\boficiāl\w*"
+    r"|\bapstiprināt\w*|\blikumīg\w*"
+    r"|\bузакон\w*|\bсогласован\w*|\bоформлен\w*|\bофициальн\w*|\bсдан\w*\s+в\s+эксплуатаци\w*"
+    r"|\blegali[sz]ed|\bapproved|\bregistered|\bofficial\w*"
+)
+
 _SHARE_SALE = re.compile(
     r"\b(?:pārdots|pārdod\w*|reģistrēts)\s+kā\s+domājam\w*\s+daļ\w*"
     r"|\bпрода[её]тся\s+как\s+(?:идеальн\w*\s+)?дол\w*"
@@ -224,6 +268,32 @@ def hot_water_fact(record: Mapping[str, Any]) -> Fact:
     kind = next((kind for kind in HOT_WATER_ORDER if found[kind]), None)
     if kind is None:
         return Fact("unknown", "none")
+    return Fact(kind, "text", tuple(dict.fromkeys(map(_quote, found[kind])))[:2])
+
+
+def replanning_fact(record: Mapping[str, Any]) -> Fact:
+    """What the seller says about a replanning; an illegal one outweighs any legal statement."""
+    joined_kitchen_counts = _series(record) not in NEW_BUILD_SERIES
+    sentences = [sentence.strip() for sentence in _SENTENCE.findall(_text(record)) if sentence.strip()]
+    found: dict[str, list[str]] = {"illegal": [], "legal": [], "unstated": []}
+    for index, sentence in enumerate(sentences):
+        said = _NO_REPLANNING.sub(lambda hit: " " * len(hit.group()), sentence)
+        replanned = _REPLANNED.search(said) or (joined_kitchen_counts and _KITCHEN_JOINED.search(said))
+        if not replanned:
+            continue
+        before = _LIST_ITEM.split(said[max(0, replanned.start() - _STATUS_REACH) : replanned.start()])[-1]
+        after = _LIST_ITEM.split(said[replanned.end() : replanned.end() + _STATUS_REACH])[0]
+        near = before + replanned.group() + after
+        if _REPLAN_ONLY_POSSIBLE.search(near) or _BUILDING_LEVEL.search(near):
+            continue
+        following = sentences[index + 1] if index + 1 < len(sentences) else ""
+        if _REPLANNED.search(following) or _REFERS_BACK.search(following):
+            near += " " + _NO_REPLANNING.sub(lambda hit: " " * len(hit.group()), following)
+        kind = "illegal" if _ILLEGAL.search(near) else "legal" if _LEGAL.search(near) else "unstated"
+        found[kind].append(sentence)
+    kind = next((kind for kind in ("illegal", "legal", "unstated") if found[kind]), None)
+    if kind is None:
+        return Fact("none", "none")
     return Fact(kind, "text", tuple(dict.fromkeys(map(_quote, found[kind])))[:2])
 
 
