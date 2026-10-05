@@ -3,6 +3,7 @@ from unittest import TestCase
 from flat_searcher.shortlist.facts import (
     LAYOUT_RANK,
     heating_fact,
+    hot_water_fact,
     land_fact,
     layout_fact,
     sells_share,
@@ -196,6 +197,9 @@ class StoveFactTests(TestCase):
         self.assertStove("Для отопления предусмотрены как электрические радиаторы, так и дровяная печь.", "heating")
         self.assertStove("Heating is provided by both electric radiators and a wood-burning stove.", "heating")
         self.assertStove("-Apkurei var uzstādīt siltumsūkni, šobrīd krāsns apkure;", "heating")
+        self.assertStove(
+            "Dzīvoklī ir ierīkota centrālā apkures sistēma, kuru var apsildīt kurinot jotul krāsniņu.", "heating"
+        )
 
     def test_kitchen_appliances_are_not_stoves(self) -> None:
         self.assertStove("Cepeškrāsns, plīts virsma, mikroviļņu krāsns.", "none")
@@ -211,6 +215,60 @@ class StoveFactTests(TestCase):
 
     def test_a_stove_that_could_be_installed_is_not_stove_heating(self) -> None:
         self.assertStove("Electric radiators, chimney flue – possibility to install a wood-burning stove.", "present")
+
+
+class HotWaterFactTests(TestCase):
+    def assertHotWater(self, description: str, value: str) -> None:
+        fact = hot_water_fact(_flat(description))
+        self.assertEqual(fact.value, value, description)
+        self.assertEqual(bool(fact.evidence), value != "unknown", description)
+
+    def test_central_hot_water(self) -> None:
+        self.assertHotWater("+ Centralizēta pilsētas apkure, centralizēts pilsētas aukstais un karstais ūdens.", "central")
+        self.assertHotWater("Centralizētā apkure; centralizētais karstais ūdens; koka logi.", "central")
+        self.assertHotWater("Pilsētas centrālā apkure, pilsētas aukstais, karstais ūdens un kanalizācija.", "central")
+        self.assertHotWater("Siltumu piegādā Rīgas siltums, aukstais un karstais ūdens - Rīgas ūdens.", "central")
+        self.assertHotWater("Mājai ir centralizēta pilsētas apkure un karstais ūdens.", "central")
+        self.assertHotWater("Центральное отопление; центральное горячее водоснабжение.", "central")
+        self.assertHotWater(
+            "Дом подключён к системе центрального теплоснабжения Риги, обеспечивающей отопление и горячее водоснабжение.",
+            "central",
+        )
+        self.assertHotWater(
+            "Karstais ūdens tiek nodrošināts izmantojot centralizēto gāzes katlu.", "central"
+        )
+
+    def test_gas_heated_water(self) -> None:
+        self.assertHotWater("Karstais ūdens tiek uzsildīts ar gāzes katlu.", "gas")
+        self.assertHotWater("Savs gāzes apkures katls uz dzīvokli- nodrošina apkuri un karsto ūdeni.", "gas")
+        self.assertHotWater("Автономное газовое отопление; горячая вода обеспечивается газовым котлом.", "gas")
+        self.assertHotWater("An independent gas boiler provides heating and hot water.", "gas")
+        self.assertHotWater("Vannas istabā gāzes kolonka.", "gas")
+
+    def test_boiler_heated_water(self) -> None:
+        self.assertHotWater("Karstais ūdens no boilera, iebūvētas mēbeles un tehnika.", "boiler")
+        self.assertHotWater("Горячая вода от электрического бойлера.", "boiler")
+        self.assertHotWater("A boiler is installed for hot water.", "boiler")
+        self.assertHotWater("Siltais ūdens ziemā ar apkuri, vasarā ar boileri.", "boiler")
+        self.assertHotWater("Dzīvoklī ir gāzes apkures katls un ūdens sildīšanas boilers.", "boiler")
+
+    def test_meters_pipes_and_a_missing_boiler_say_nothing_about_the_source(self) -> None:
+        self.assertHotWater("Uzstādīti siltuma, aukstā un karstā ūdens patēriņa skaitītāji.", "unknown")
+        self.assertHotWater("Nomainīti aukstā un karstā ūdens stāvvadi.", "unknown")
+        self.assertHotWater("Central heating is a big advantage as there is no boiler in the bathroom.", "unknown")
+        self.assertHotWater("Jauns gāzes katls, siltas grīdas.", "unknown")
+        self.assertHotWater("The apartment has its own gas boiler, adjustable radiators.", "unknown")
+        self.assertHotWater("The building has an autonomous gas heating boiler.", "unknown")
+
+    def test_a_gas_boiler_heats_the_water_only_when_the_listing_says_so_next_to_it(self) -> None:
+        self.assertHotWater(
+            "Mājai ir gāzes apkures katls, savukārt siltais ūdens dzīvoklī tiek nodrošināts ar boileri.", "boiler"
+        )
+        self.assertHotWater(
+            "Centralizēta gāzes apkure (ēkai pagrabā ir savs gāzes katls), karstais ūdens tiek nodrošināts, "
+            "izmantojot centralizēto gāzes katlu.",
+            "central",
+        )
 
 
 class ShareFactTests(TestCase):

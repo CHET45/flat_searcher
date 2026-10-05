@@ -55,7 +55,8 @@ _STOVE_HEATING = re.compile(
     r"|\bотоплени\w*\s*[-–:]?\s*(?:печн\w*|печ(?:ь|ью|ами)\b|(?:на\s+)?дров\w*)"
 )
 _STOVE_HEATING_MORE = re.compile(
-    r"\bпеч\w*\s+для\s+отоплени\w*"
+    r"\bkurin\w*\s+(?:\w+\s+){0,2}krāsn\w*|\bkrāsn\w*\s+kurin\w*"
+    r"|\bтоп\w*\s+печ\w*|\bпеч\w*\s+для\s+отоплени\w*"
     r"|\bдровян\w*\s+печ\w*[^.;]{0,40}отоплени\w*|\bотоплени\w*[^.;]{0,60}\bдровян\w*\s+печ\w*"
     r"|\bstove\s+heating|\bheated\s+(?:by|with)\s+(?:a\s+)?(?:wood\s+)?stove"
     r"|\bwood(?:-burning)?\s+stove[^.;]{0,50}\bheating|\bheating\b[^.;]{0,60}\bwood(?:-burning)?\s+stove"
@@ -109,6 +110,24 @@ _MODAL = re.compile(
     r"|\buzstādīšan\w*|\bдля\s+установки|\bfor\s+(?:the\s+)?installation|\bpotenciāl\w*"
 )
 _CLAUSES = re.compile(r"[^.;!?\n]+[.;!?]?")
+
+_HOT_WATER_CENTRAL = re.compile(
+    r"\b(?:centralizēt|centrāl|pilsētas)\w*\s+(?:pilsētas\s+)?(?:aukst\w*\s*(?:un|/|,)\s*)?karst\w*\s+ūden\w*"
+    r"|\b(?:centralizēt|centrāl)\w*\s+(?:pilsētas\s+)?apkur\w*\s+un\s+karst\w*\s+ūden\w*"
+    r"|\bkarst\w*\s+ūden\w*\s*[-–:]?\s*(?:rīgas|pilsētas|centrāl|centralizēt)\w*"
+    r"|\bkarst\w*\s+ūden\w*[^.;]{0,40}\bcentralizēt\w*"
+    r"|\b(?:центральн|централизованн|городск)\w*\s+горяч\w*\s+вод\w*|\bгоряч\w*\s+вод\w*\s*[-–:]?\s*центральн\w*"
+    r"|\bцентральн\w*\s+теплоснабжени\w*[^.;]{0,60}\bгоряч\w*\s+вод\w*"
+    r"|\bcentral(?:ised|ized)?\s+hot\s+water"
+)
+_HOT_WATER_GAS = re.compile(r"\bgāzes\s+kolonk\w*|\bгазов\w*\s+колонк\w*|\bgas\s+water\s+heater")
+_HOT_WATER_BOILER = re.compile(
+    r"(?<!nav )\bboiler(?:is|a|i|u|im|iem|ī)\b|(?<!без )\bбойлер\w*"
+    r"|\būdens\s+sild\w*|\bводонагрев\w*|\bwater\s+heater|\bhot\s+water\s+boilers?\b"
+    r"|(?<!\bno )(?<!gas )(?<!heating )(?<!gas-based )\bboilers?\b(?=[^.;,]{0,25}\bhot\s+water)"
+)
+_SHARED_BOILER = re.compile(r"(?:centraliz\w*|centrāl\w*|mājas|ēkas|communal|домов\w*|общ\w*)\s+$")
+HOT_WATER_ORDER = ("gas", "boiler", "central")
 _STOVE_OBJECT = re.compile(
     r"(?<!mikroviļņu )(?<!mikroviļnu )(?<!микроволновая )(?<!духовая )"
     r"\b(?:krāsn\w*|печь|печка|печи)\b|\bwood(?:-burning)?\s+stove"
@@ -195,6 +214,36 @@ def stove_fact(record: Mapping[str, Any]) -> Fact:
     return Fact("present", "text", present) if present else Fact("none", "none")
 
 
+def hot_water_fact(record: Mapping[str, Any]) -> Fact:
+    """A local source beats a general claim of central hot water."""
+    found: dict[str, list[str]] = {kind: [] for kind in HOT_WATER_ORDER}
+    for clause in _clauses(_text(record)):
+        kind = _hot_water_kind(clause)
+        if kind:
+            found[kind].append(clause)
+    kind = next((kind for kind in HOT_WATER_ORDER if found[kind]), None)
+    if kind is None:
+        return Fact("unknown", "none")
+    return Fact(kind, "text", tuple(dict.fromkeys(map(_quote, found[kind])))[:2])
+
+
+def _hot_water_kind(clause: str) -> str | None:
+    if _HOT_WATER_GAS.search(clause):
+        return "gas"
+    if any(
+        _HOT_WATER_WORD.search(_near(clause, boiler))
+        and not _SHARED_BOILER.search(clause[max(0, boiler.start() - 20) : boiler.start()])
+        for boiler in _HEATING_BOILER.finditer(clause)
+        if "gāz" in boiler.group() or "газ" in boiler.group() or "gas" in boiler.group()
+    ):
+        return "gas"
+    if _HOT_WATER_BOILER.search(clause):
+        return "boiler"
+    if _HOT_WATER_CENTRAL.search(clause):
+        return "central"
+    return None
+
+
 def _stove_heating(clause: str) -> bool:
     if _REMOVED.search(clause):
         return False
@@ -219,6 +268,12 @@ def _heating_kind(clause: str) -> str | None:
 
 
 def _for_hot_water_only(clause: str, match: re.Match[str]) -> bool:
+    near = _near(clause, match)
+    return bool(_HOT_WATER_WORD.search(near)) and not _HEAT_WORD.search(near)
+
+
+def _near(clause: str, match: re.Match[str]) -> str:
+    """The words that qualify a match: its comma part, plus a relative clause right after it."""
     before = clause[: match.start()].rsplit(",", 1)[-1][-50:]
     after = clause[match.end() : match.end() + 60]
     relative = _RELATIVE.match(after)
@@ -226,8 +281,7 @@ def _for_hot_water_only(clause: str, match: re.Match[str]) -> bool:
         after = after[: relative.end()] + after[relative.end() :].split(",", 1)[0]
     else:
         after = after.split(",", 1)[0]
-    near = before + match.group() + after
-    return bool(_HOT_WATER_WORD.search(near)) and not _HEAT_WORD.search(near)
+    return before + match.group() + after
 
 
 def _clauses(text: str) -> list[str]:
