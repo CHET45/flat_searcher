@@ -192,6 +192,9 @@ excluded_types = ["Koka"]
 [heating]
 exclude_stove = true
 
+[floor]
+exclude = [1]                  # floors that never pass; default: none
+
 [transit]
 walk_m = 500                   # stops this close to the flat and to a target count
 transfer_walk_m = 300          # default; longest walk between two stops at a transfer
@@ -209,7 +212,6 @@ address = "Brīvības iela 1"    # resolved through the address register
 size = 20                      # default
 max_minutes = 120              # sum over targets of minutes + every/2; default: no cap
 exclude_walkthrough = true     # default
-exclude_ground_floor = true    # default
 exclude_leased_land = true     # default
 ```
 

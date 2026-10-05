@@ -14,6 +14,8 @@ order = [2, 1]
 excluded_types = ["Koka"]
 [heating]
 exclude_stove = true
+[floor]
+exclude = [1]
 """
 )
 
@@ -23,6 +25,7 @@ def _record(
     price: int | None = 35000,
     rooms: int | None = 2,
     building_type: str = "Paneļu",
+    floor: int | None = 3,
     description: str = "Gaišs dzīvoklis.",
     series: str = "P. kara",
     ratio: float | None = 1.0,
@@ -33,6 +36,7 @@ def _record(
         "core": {
             "price_eur": price,
             "declared_rooms": rooms,
+            "floor": floor,
             "building_type": building_type,
             "building_series": series,
         },
@@ -77,6 +81,11 @@ class GateTests(TestCase):
         self.assertRejected(_record("w", building_type="Koka"), "building_type")
         self.assertRejected(_record("s", description="Krāsns apkure."), "stove")
         self.assertRejected(_record("d", description="Dzīvoklis pārdodas kā domājamā daļa."), "share")
+
+    def test_excluded_floors_are_rejected_and_an_unknown_floor_passes(self) -> None:
+        self.assertRejected(_record("ground", floor=1), "floor")
+        self.assertRejected(_record("second", floor=2), None)
+        self.assertRejected(_record("unknown", floor=None), None)
 
     def test_first_failing_gate_is_the_reason(self) -> None:
         self.assertRejected(_record("x", price=90000, rooms=4, building_type="Koka"), "price")

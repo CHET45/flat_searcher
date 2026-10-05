@@ -95,8 +95,6 @@ def today_rules(rules: TodayRules) -> list[str]:
     words = []
     if rules.exclude_walkthrough:
         words.append("no walk-through room")
-    if rules.exclude_ground_floor:
-        words.append("not on the ground floor")
     if rules.exclude_leased_land:
         words.append("land not leased")
     words.append("no implausible price, not room-sized")

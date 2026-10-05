@@ -16,6 +16,7 @@ DEFAULT_JOURNEYS_MAX = 4
 _SECTIONS: dict[str, frozenset[str]] = {
     "price": frozenset({"max_eur", "bands"}),
     "rooms": frozenset({"order"}),
+    "floor": frozenset({"exclude"}),
     "building": frozenset({"excluded_types"}),
     "heating": frozenset({"exclude_stove"}),
     "transit": frozenset(
@@ -30,7 +31,7 @@ _SECTIONS: dict[str, frozenset[str]] = {
         }
     ),
     "today": frozenset(
-        {"size", "max_minutes", "exclude_walkthrough", "exclude_ground_floor", "exclude_leased_land"}
+        {"size", "max_minutes", "exclude_walkthrough", "exclude_leased_land"}
     ),
 }
 _TARGET_KEYS = frozenset({"name", "address", "lat", "lon"})
@@ -55,7 +56,6 @@ class TodayRules:
     size: int = 20
     max_minutes: int | None = None
     exclude_walkthrough: bool = True
-    exclude_ground_floor: bool = True
     exclude_leased_land: bool = True
 
 
@@ -73,6 +73,7 @@ class Criteria:
     journeys_max: int
     targets: tuple[Target, ...]
     today: TodayRules = TodayRules()
+    excluded_floors: frozenset[int] = frozenset()
 
     def band_index(self, price: float) -> int | None:
         if price > self.max_eur:
@@ -119,6 +120,7 @@ def parse_criteria(text: str) -> Criteria:
         journeys_max=int(transit.get("journeys_max", DEFAULT_JOURNEYS_MAX)),
         targets=tuple(_target(target) for target in transit.get("targets", [])),
         today=_today(_section(data, "today")),
+        excluded_floors=_floors(_section(data, "floor").get("exclude", [])),
     )
 
 
@@ -146,9 +148,14 @@ def _today(section: Mapping[str, Any]) -> TodayRules:
         size=int(section.get("size", defaults.size)),
         max_minutes=max_minutes,
         exclude_walkthrough=bool(section.get("exclude_walkthrough", defaults.exclude_walkthrough)),
-        exclude_ground_floor=bool(section.get("exclude_ground_floor", defaults.exclude_ground_floor)),
         exclude_leased_land=bool(section.get("exclude_leased_land", defaults.exclude_leased_land)),
     )
+
+
+def _floors(floors: Any) -> frozenset[int]:
+    if not isinstance(floors, list) or not all(isinstance(floor, int) for floor in floors):
+        raise CriteriaError("floor.exclude must be a list of integers")
+    return frozenset(floors)
 
 
 def _section(data: Mapping[str, Any], name: str) -> Mapping[str, Any]:

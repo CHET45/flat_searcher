@@ -35,8 +35,10 @@ journeys_max = 3
 size = 12
 max_minutes = 110
 exclude_walkthrough = false
-exclude_ground_floor = false
 exclude_leased_land = false
+
+[floor]
+exclude = [1, 0]
 
 [[transit.targets]]
 name = "office"
@@ -68,7 +70,8 @@ class ParseCriteriaTests(TestCase):
                 Target("school", "Other iela 2", 56.95, 24.1),
             ),
         )
-        self.assertEqual(criteria.today, TodayRules(12, 110, False, False, False))
+        self.assertEqual(criteria.today, TodayRules(12, 110, False, False))
+        self.assertEqual(criteria.excluded_floors, frozenset({0, 1}))
 
     def test_band_index_follows_preference_order_and_half_open_bounds(self) -> None:
         criteria = parse_criteria(SKETCH)
@@ -90,7 +93,8 @@ class ParseCriteriaTests(TestCase):
         self.assertEqual(criteria.window, ("07:00", "10:00"))
         self.assertEqual((criteria.max_transfers, criteria.journeys_max), (2, 4))
         self.assertEqual(criteria.targets, ())
-        self.assertEqual(criteria.today, TodayRules(20, None, True, True, True))
+        self.assertEqual(criteria.today, TodayRules(20, None, True, True))
+        self.assertEqual(criteria.excluded_floors, frozenset())
 
     def test_unknown_keys_are_errors_that_name_the_key(self) -> None:
         with self.assertRaisesRegex(CriteriaError, "max_price"):
@@ -99,6 +103,16 @@ class ParseCriteriaTests(TestCase):
             parse_criteria("[price]\nmax_eur = 1\n[colour]\nx = 1\n")
         with self.assertRaisesRegex(CriteriaError, "walk"):
             parse_criteria('[price]\nmax_eur = 1\n[[transit.targets]]\nname = "a"\naddress = "b"\nwalk = 1\n')
+
+    def test_the_ground_floor_is_a_gate_not_a_today_rule(self) -> None:
+        with self.assertRaisesRegex(CriteriaError, "today.exclude_ground_floor"):
+            parse_criteria("[price]\nmax_eur = 1\n[today]\nexclude_ground_floor = true\n")
+
+    def test_excluded_floors_are_integers(self) -> None:
+        with self.assertRaisesRegex(CriteriaError, "floor.exclude"):
+            parse_criteria('[price]\nmax_eur = 1\n[floor]\nexclude = ["1"]\n')
+        with self.assertRaisesRegex(CriteriaError, "floor.exclude"):
+            parse_criteria("[price]\nmax_eur = 1\n[floor]\nexclude = 1\n")
 
     def test_price_cap_is_required(self) -> None:
         with self.assertRaisesRegex(CriteriaError, "max_eur"):

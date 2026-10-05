@@ -17,7 +17,7 @@ from flat_searcher.shortlist.facts import (
     sells_share,
 )
 
-GATES = ("price", "rooms", "building_type", "stove", "share")
+GATES = ("price", "rooms", "floor", "building_type", "stove", "share")
 
 
 @dataclass(frozen=True)
@@ -55,6 +55,7 @@ def evaluate(
     checks = {
         "price": band is None,
         "rooms": bool(criteria.room_order) and rooms is not None and rooms not in criteria.room_order,
+        "floor": core.get("floor") in criteria.excluded_floors,
         "building_type": core.get("building_type") in criteria.excluded_types,
         "stove": criteria.exclude_stove and heating.value == "stove",
         "share": share.value == "yes",

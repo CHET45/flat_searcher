@@ -48,7 +48,6 @@ def _scores(
         or not isinstance(area, (int, float))
         or (rules.max_minutes is not None and minutes > rules.max_minutes)
         or (rules.exclude_walkthrough and item.layout.value == "walkthrough")
-        or (rules.exclude_ground_floor and core.get("floor") == 1)
         or (rules.exclude_leased_land and item.land.value == "leased")
         or suspicion_flags(item)
     ):

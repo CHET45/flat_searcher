@@ -206,7 +206,7 @@ class RenderPageTests(TestCase):
         cards = {card["id"]: card for card in data["cards"]}
         self.assertEqual({ss_id: card["today"] for ss_id, card in cards.items()},
                          {"big": 1, "small": 1, "dear": None, "nowhere": None})
-        self.assertIn("not on the ground floor", data["today"]["rules"])
+        self.assertNotIn("not on the ground floor", data["today"]["rules"])
         self.assertEqual(data["today"]["size"], 2)
 
     def test_seller_text_cannot_close_the_data_script(self) -> None:
