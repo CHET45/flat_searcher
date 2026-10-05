@@ -6,7 +6,7 @@ from collections.abc import Sequence
 from dataclasses import dataclass
 
 from flat_searcher.shortlist.criteria import TodayRules
-from flat_searcher.shortlist.digest import suspicion_flags
+from flat_searcher.shortlist.alerts import suspicion_flags
 from flat_searcher.shortlist.rank import Evaluation, total_expected_minutes
 
 
@@ -49,6 +49,7 @@ def _scores(
         or (rules.max_minutes is not None and minutes > rules.max_minutes)
         or (rules.exclude_walkthrough and item.layout.value == "walkthrough")
         or (rules.exclude_leased_land and item.land.value == "leased")
+        or (rules.exclude_illegal_replanning and item.replanning.value == "illegal")
         or suspicion_flags(item)
     ):
         return None

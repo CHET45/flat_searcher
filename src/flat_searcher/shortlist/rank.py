@@ -12,8 +12,10 @@ from flat_searcher.shortlist.facts import (
     LAYOUT_RANK,
     Fact,
     heating_fact,
+    hot_water_fact,
     land_fact,
     layout_fact,
+    replanning_fact,
     sells_share,
     stove_fact,
 )
@@ -32,6 +34,8 @@ class Evaluation:
     heating: Fact
     land: Fact = Fact("unknown", "none")
     stove: Fact = Fact("none", "none")
+    hot_water: Fact = Fact("unknown", "none")
+    replanning: Fact = Fact("none", "none")
     journeys: dict[str, list[dict[str, Any]]] = field(default_factory=dict)
     precision: str | None = None
     price_ratio: float | None = None
@@ -76,6 +80,8 @@ def evaluate(
         heating=heating,
         land=land_fact(record),
         stove=stove_fact(record),
+        hot_water=hot_water_fact(record),
+        replanning=replanning_fact(record),
         journeys=dict((transit or {}).get("targets") or {}),
         precision=(transit or {}).get("precision"),
         price_ratio=_price_ratio(record),

@@ -149,6 +149,24 @@ class RenderPageTests(TestCase):
         self.assertEqual(data["mapScript"], "map.js?v=2026-09-24")
         self.assertEqual((data["counts"]["candidates"], data["counts"]["flats"]), (3, 3))
 
+    def test_the_card_carries_alerts_heating_hot_water_replanning_and_the_sites_own_values(self) -> None:
+        record = _record("a", description="Autonoma gāzes apkure. Karstais ūdens no boilera. "
+                                          "Dzīvoklis ir pārplānots. Zeme zem mājas ir nomā.")
+        record["fields"].update({"Cena": "35 000 € (700 €/m²)", "Platība": "50 m²", "Stāvs": "3/5",
+                                 "Istabas": "2", "Tālrunis": "(+371)29-***"})
+        card = _cards(_page([record]))["a"]
+        self.assertEqual(card["alerts"], [
+            {"level": "red", "text": "land leased", "quote": "zeme zem mājas ir nomā."},
+            {"level": "amber", "text": "replanning: check the documents", "quote": "dzīvoklis ir pārplānots."},
+            {"level": "amber", "text": "heating: own boiler", "quote": "autonoma gāzes apkure."},
+        ])
+        self.assertEqual(card["heating"], {"value": "own_boiler", "quote": "autonoma gāzes apkure."})
+        self.assertEqual(card["hotWater"], {"value": "boiler", "quote": "karstais ūdens no boilera."})
+        self.assertEqual(card["replanning"], {"value": "unstated", "quote": "dzīvoklis ir pārplānots."})
+        self.assertEqual(card["source"], {"Cena": "35 000 € (700 €/m²)", "Platība": "50 m²", "Istabas": "2",
+                                          "Stāvs": "3/5", "Sērija": "P. kara"})
+        self.assertNotIn("flags", card)
+
     def test_the_card_shows_the_option_with_the_shortest_expected_time(self) -> None:
         page = _page([_record("a")], [_located("a", office=[RARE, SLOW, JOURNEY])])
         self.assertEqual(_cards(page)["a"]["best"]["office"]["minutes"], 24)
@@ -239,12 +257,13 @@ HARNESS = Path(__file__).with_name("page_harness.js")
 class PageScriptTests(TestCase):
     """The page's own script, run offline: Leaflet and map.js never load."""
 
-    def _run(self, page: PageFiles, actions: list | None = None, storage: dict | None = None) -> dict:
+    def _run(self, page: PageFiles, actions: list | None = None, storage: dict | None = None,
+             now: str = "2026-09-24T12:00:00") -> dict:
         with tempfile.TemporaryDirectory() as temp:
             path = Path(temp) / "index.html"
             path.write_bytes(page.html.encode("utf-8"))
             result = subprocess.run(
-                [str(NODE), str(HARNESS), str(path), json.dumps(actions or []), json.dumps(storage or {})],
+                [str(NODE), str(HARNESS), str(path), json.dumps(actions or []), json.dumps(storage or {}), now],
                 capture_output=True, text=True, encoding="utf-8", check=False,
             )
         self.assertEqual(result.returncode, 0, result.stderr)
@@ -295,6 +314,26 @@ class PageScriptTests(TestCase):
         later = self._run(self._flats(), [{"click": "view-all"}, {"change": "f-visit", "checked": True}],
                           {"riga-flat-shortlist-visits": '{"current": "2026-08-30"}'})
         self.assertEqual(later["cards"], ["small", "big", "dear"])
+
+    def test_a_page_older_than_a_day_says_how_old_its_data_is(self) -> None:
+        self.assertIsNone(self._run(self._flats(), now="2026-09-24T23:30:00")["stale"])
+        self.assertEqual(self._run(self._flats(), now="2026-09-27T08:00:00")["stale"],
+                         "Data from 24.09, 3 days old: prices and availability may have changed.")
+
+    def test_alerts_open_the_card_and_the_heating_line_follows_the_pills(self) -> None:
+        listings = [_record("stove", description="Centrālā apkure. Istabā arī krāsns apkure."),
+                    _record("plain", house="2", description="Mājā ir centrālā apkure.")]
+        listed = self._run(_page(listings, [_located("stove"), _located("plain")]), [{"click": "view-all"}])["list"]
+        cards = {}
+        for part in listed.split("<article")[1:]:
+            found = re.search(r'id="c-([^"]+)"', part)
+            assert found is not None
+            cards[found.group(1)] = part
+        self.assertIn('<span class="alert red">⚠ stove heating</span>', cards["stove"])
+        self.assertLess(cards["stove"].index('class="alerts"'), cards["stove"].index('class="facts"'))
+        self.assertIn("Heating: <b>city, central</b> · Hot water: <b>not stated</b>", cards["stove"])
+        self.assertIn("“istabā arī krāsns apkure.”", cards["stove"])
+        self.assertNotIn('class="alerts"', cards["plain"])
 
     def test_sorting_by_price_reorders_the_cards(self) -> None:
         shown = self._run(self._flats(), [{"click": "view-all"}, {"change": "f-sort", "value": "area"}])

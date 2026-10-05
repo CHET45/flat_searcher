@@ -43,14 +43,15 @@ class TodayTests(TestCase):
             _flat("ok"),
             _flat("walkthrough", description="Divas caurstaigājamas istabas."),
             _flat("leased", description="Zeme zem mājas ir nomā."),
+            _flat("replanned", description="Pārplānojums nav saskaņots."),
             _flat("implausible", ratio=0.3),
             _flat("room", area=18),
             _flat("no-way", campus=[]),
         ]
         self.assertEqual(_picks(flats), [("ok", 1)])
-        lenient = TodayRules(exclude_walkthrough=False, exclude_leased_land=False)
+        lenient = TodayRules(exclude_walkthrough=False, exclude_leased_land=False, exclude_illegal_replanning=False)
         self.assertEqual(
-            [ss_id for ss_id, _ in _picks(flats, lenient)], ["ok", "walkthrough", "leased"]
+            [ss_id for ss_id, _ in _picks(flats, lenient)], ["ok", "walkthrough", "leased", "replanned"]
         )
 
     def test_a_journey_cap_applies_to_the_sum_over_targets(self) -> None:

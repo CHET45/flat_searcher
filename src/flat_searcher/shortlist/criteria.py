@@ -31,7 +31,7 @@ _SECTIONS: dict[str, frozenset[str]] = {
         }
     ),
     "today": frozenset(
-        {"size", "max_minutes", "exclude_walkthrough", "exclude_leased_land"}
+        {"size", "max_minutes", "exclude_walkthrough", "exclude_leased_land", "exclude_illegal_replanning"}
     ),
 }
 _TARGET_KEYS = frozenset({"name", "address", "lat", "lon"})
@@ -57,6 +57,7 @@ class TodayRules:
     max_minutes: int | None = None
     exclude_walkthrough: bool = True
     exclude_leased_land: bool = True
+    exclude_illegal_replanning: bool = True
 
 
 @dataclass(frozen=True)
@@ -149,6 +150,9 @@ def _today(section: Mapping[str, Any]) -> TodayRules:
         max_minutes=max_minutes,
         exclude_walkthrough=bool(section.get("exclude_walkthrough", defaults.exclude_walkthrough)),
         exclude_leased_land=bool(section.get("exclude_leased_land", defaults.exclude_leased_land)),
+        exclude_illegal_replanning=bool(
+            section.get("exclude_illegal_replanning", defaults.exclude_illegal_replanning)
+        ),
     )
 
 

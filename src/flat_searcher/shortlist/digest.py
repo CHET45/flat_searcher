@@ -9,6 +9,7 @@ from itertools import groupby
 from typing import Any, TypeGuard
 
 from flat_searcher.library import ACTIVE
+from flat_searcher.shortlist.alerts import alerts_for
 from flat_searcher.shortlist.criteria import Criteria
 from flat_searcher.shortlist.rank import Evaluation, evaluate, sort_key
 
@@ -17,9 +18,6 @@ DROP_MARK = "↓"
 APPROX_MARK = "≈"
 NO_ROUTE = "—"
 UNKNOWN_CELL = "?"
-LAND_LEASED = "land leased"
-IMPLAUSIBLE_RATIO = 0.4
-ROOM_SIZED_M2 = 20
 
 
 @dataclass(frozen=True)
@@ -182,7 +180,6 @@ def _row(item: Evaluation, marks: str, targets: list[str], located: bool) -> str
     if item.precision == "approx":
         address += f" {APPROX_MARK}"
     layout = "—" if item.layout.value == "n/a" else f"{item.layout.value} ({item.layout.source})"
-    flags = row_flags(item)
     cells = [
         marks,
         f"{price:,}".replace(",", " ") if isinstance(price, (int, float)) else UNKNOWN_CELL,
@@ -199,7 +196,7 @@ def _row(item: Evaluation, marks: str, targets: list[str], located: bool) -> str
             else UNKNOWN_CELL
             for name in targets
         ),
-        ", ".join(flags),
+        ", ".join(alert.text for alert in alerts_for(item)),
         f"[ss]({item.record.get('url')})",
     ]
     return "| " + " | ".join(_escape(str(cell)) for cell in cells) + " |"
@@ -208,26 +205,6 @@ def _row(item: Evaluation, marks: str, targets: list[str], located: bool) -> str
 def journey_label(option: Mapping[str, Any]) -> str:
     legs = " → ".join("/".join(leg.get("routes") or []) for leg in option.get("legs") or [])
     return f"{legs} ({option.get('minutes')} min, every {option.get('every_min')})"
-
-
-def row_flags(item: Evaluation) -> list[str]:
-    flags = []
-    if item.stove.value == "present":
-        flags.append("stove?")
-    if item.land.value == "leased":
-        flags.append(LAND_LEASED)
-    flags.extend(suspicion_flags(item))
-    return flags
-
-
-def suspicion_flags(item: Evaluation) -> list[str]:
-    area = (item.record.get("core") or {}).get("area_m2")
-    flags = []
-    if item.price_ratio is not None and item.price_ratio < IMPLAUSIBLE_RATIO:
-        flags.append(f"price < {IMPLAUSIBLE_RATIO}× district")
-    if isinstance(area, (int, float)) and area < ROOM_SIZED_M2:
-        flags.append(f"under {ROOM_SIZED_M2} m²")
-    return flags
 
 
 def _plain(value: Any) -> str:

@@ -36,6 +36,7 @@ size = 12
 max_minutes = 110
 exclude_walkthrough = false
 exclude_leased_land = false
+exclude_illegal_replanning = false
 
 [floor]
 exclude = [1, 0]
@@ -70,7 +71,7 @@ class ParseCriteriaTests(TestCase):
                 Target("school", "Other iela 2", 56.95, 24.1),
             ),
         )
-        self.assertEqual(criteria.today, TodayRules(12, 110, False, False))
+        self.assertEqual(criteria.today, TodayRules(12, 110, False, False, False))
         self.assertEqual(criteria.excluded_floors, frozenset({0, 1}))
 
     def test_band_index_follows_preference_order_and_half_open_bounds(self) -> None:
@@ -93,7 +94,7 @@ class ParseCriteriaTests(TestCase):
         self.assertEqual(criteria.window, ("07:00", "10:00"))
         self.assertEqual((criteria.max_transfers, criteria.journeys_max), (2, 4))
         self.assertEqual(criteria.targets, ())
-        self.assertEqual(criteria.today, TodayRules(20, None, True, True))
+        self.assertEqual(criteria.today, TodayRules(20, None, True, True, True))
         self.assertEqual(criteria.excluded_floors, frozenset())
 
     def test_unknown_keys_are_errors_that_name_the_key(self) -> None:

@@ -9,7 +9,9 @@ from importlib import resources
 from typing import Any
 
 from flat_searcher.shortlist.criteria import Criteria, TodayRules
-from flat_searcher.shortlist.digest import LAND_LEASED, Selection, band_label, row_flags, section_label
+from flat_searcher.shortlist.alerts import alerts_for
+from flat_searcher.shortlist.digest import Selection, band_label, section_label
+from flat_searcher.shortlist.facts import Fact
 from flat_searcher.shortlist.groups import group_ads
 from flat_searcher.shortlist.rank import Evaluation, expected_minutes
 from flat_searcher.shortlist.today import pick_today
@@ -21,6 +23,7 @@ MAP_GLOBAL = "flatMapData"
 PHOTO_DIR = "photos"
 SORT_METRICS = {"time": "expected", "transfers": "transfers", "every": "every_min", "walk": "walk_m"}
 ALL_TARGETS = "*"
+SOURCE_FIELDS = ("Cena", "Platība", "Istabas", "Stāvs", "Sērija", "Mājas tips", "Iela")
 
 
 @dataclass(frozen=True)
@@ -97,6 +100,8 @@ def today_rules(rules: TodayRules) -> list[str]:
         words.append("no walk-through room")
     if rules.exclude_leased_land:
         words.append("land not leased")
+    if rules.exclude_illegal_replanning:
+        words.append("no replanning the seller calls not legalised")
     words.append("no implausible price, not room-sized")
     if rules.max_minutes is not None:
         words.append(f"at most {rules.max_minutes} min to all targets together, waits included")
@@ -124,6 +129,7 @@ def _card(
     item = group[0]
     record = item.record
     core = record.get("core") or {}
+    fields = record.get("fields") or {}
     entry = selection.transit.get(item.ss_id) or {}
     layout_quote = item.layout.evidence[0] if item.layout.source == "text" and item.layout.evidence else None
     first_seen = min(str(ad.record.get("first_seen") or "")[:10] for ad in group)
@@ -156,13 +162,17 @@ def _card(
         "floors": core.get("total_floors"),
         "layout": {"value": item.layout.value, "source": item.layout.source, "quote": layout_quote},
         "land": {"value": item.land.value, "quote": item.land.evidence[0] if item.land.evidence else None},
-        "company": (record.get("fields") or {}).get("Uzņēmums") or None,
+        "company": fields.get("Uzņēmums") or None,
         "model": _model(record),
         "history": [[day, price] for day, price in selection.price_history.get(item.ss_id, [])],
         "best": {name: _best(item.journeys.get(name) or []) for name in names} if entry else {},
         "sort": _sort_keys(item.journeys, names) if entry else {},
         "reached": item.reached,
-        "flags": [flag for flag in row_flags(item) if flag != LAND_LEASED],
+        "alerts": [asdict(alert) for alert in alerts_for(item)],
+        "heating": _fact(item.heating),
+        "hotWater": _fact(item.hot_water),
+        "replanning": _fact(item.replanning),
+        "source": {key: fields[key] for key in SOURCE_FIELDS if fields.get(key)},
         "today": today.get(item.ss_id),
         "photo": None,
     }
@@ -193,6 +203,10 @@ def _card_stops(cards: Sequence[Mapping[str, Any]]) -> set[str]:
         for leg in option["legs"]
         for stop in (leg["board"], leg["alight"])
     }
+
+
+def _fact(fact: Fact) -> dict[str, Any]:
+    return {"value": fact.value, "quote": fact.evidence[0] if fact.evidence else None}
 
 
 def _model(record: Mapping[str, Any]) -> dict[str, Any] | None:

@@ -1,7 +1,7 @@
 "use strict";
 // Runs the digest page's script against a minimal DOM stand-in, with no network:
 // every external script (Leaflet, map.js) fails to load. Prints what the list shows.
-// Usage: node page_harness.js <index.html> '<actions JSON>' '<localStorage JSON>'
+// Usage: node page_harness.js <index.html> '<actions JSON>' '<localStorage JSON>' [now ISO]
 const fs = require("fs");
 
 const html = fs.readFileSync(process.argv[2], "utf8");
@@ -12,6 +12,7 @@ const code = html.match(/<script>\n([\s\S]*?)<\/script>/)[1];
 const markup = html.replace(/<script[\s\S]*?<\/script>/g, "");
 const staticIds = new Set(["data", ...[...markup.matchAll(/ id="([^"]+)"/g)].map((m) => m[1])]);
 const loaded = [];
+if (process.argv[5]) Date.now = () => Date.parse(process.argv[5]);
 
 const elements = new Map();
 class Element {
@@ -99,6 +100,7 @@ const target = (action) => ({
   }
   const listed = document.getElementById("list").innerHTML + (document.getElementById("grid") || { html: "" }).html;
   const note = document.getElementById("map-note");
+  const stale = document.getElementById("stale");
   process.stdout.write(JSON.stringify({
     cards: [...listed.matchAll(/<article class="[^"]*" id="c-([^"]+)"/g)].map((m) => m[1]),
     list: listed,
@@ -106,6 +108,7 @@ const target = (action) => ({
     all: document.getElementById("view-all").textContent,
     visitDisabled: document.getElementById("f-visit").disabled,
     mapNote: note.hidden ? null : note.textContent,
+    stale: stale.hidden ? null : stale.textContent,
     loaded,
     storage: Object.fromEntries(storage),
   }));

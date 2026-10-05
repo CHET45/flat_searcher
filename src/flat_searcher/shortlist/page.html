@@ -165,6 +165,13 @@ details.rejected summary { cursor: pointer; }
 .pill { border: 1px solid var(--line); border-radius: 999px; padding: 0 8px; color: var(--muted); }
 .pill.good { color: var(--good); border-color: currentColor; }
 .pill.bad { color: var(--bad); border-color: currentColor; }
+.alerts { grid-column: 1 / -1; display: flex; flex-wrap: wrap; gap: 5px; font-size: 13px; font-weight: 600; }
+.alert { border: 1.5px solid currentColor; border-radius: 6px; padding: 0 7px; }
+.alert.red { color: var(--bad); background: color-mix(in srgb, var(--bad) 12%, transparent); }
+.alert.amber { color: var(--mark); background: color-mix(in srgb, var(--mark) 10%, transparent); }
+.utility { grid-column: 1 / -1; margin: 0; font-size: 13px; color: var(--muted); }
+.utility b { color: var(--ink); font-weight: 600; }
+.stale { margin: 0 0 8px; padding: 6px 10px; border: 1.5px solid var(--bad); border-radius: 8px; color: var(--bad); font-weight: 600; }
 .history { grid-column: 1 / -1; margin: 0; font-size: 13px; color: var(--muted); font-variant-numeric: tabular-nums; }
 .history b { color: var(--good); font-weight: 600; }
 .history b.up { color: var(--bad); }
@@ -187,10 +194,10 @@ details.rejected summary { cursor: pointer; }
 details.why, details.ads { grid-column: 1 / -1; font-size: 13px; color: var(--muted); }
 details.why summary, details.ads summary { cursor: pointer; }
 details.why p { margin: 4px 0 0; font-style: italic; }
+details.why p.source { font-style: normal; }
 details.ads ul { margin: 4px 0 0; padding-left: 18px; }
 details.ads a { color: var(--accent); }
 .foot { grid-column: 1 / -1; display: flex; justify-content: flex-end; align-items: center; gap: 8px; font-size: 13px; flex-wrap: wrap; }
-.flags { color: var(--bad); margin-right: auto; }
 .foot a { color: var(--accent); font-weight: 600; text-decoration: none; }
 .foot a:hover { text-decoration: underline; }
 .small-btn {
@@ -305,6 +312,7 @@ details.how .chip { margin-right: 4px; }
       </div>
     </div>
     <p class="summary" id="summary"></p>
+    <p class="stale" id="stale" hidden></p>
     <div class="controls">
       <div class="tabs" role="group" aria-label="Which flats">
         <button type="button" id="view-today" aria-pressed="true"></button>
@@ -428,6 +436,10 @@ details.how .chip { margin-right: 4px; }
     "<b>" + counts.flats + "</b> flats (" + counts.candidates + " ads) of " + money(counts.active) + " active · " +
     "NEW <b>" + counts.new + "</b> · ↓ <b>" + counts.price_drops + "</b> cheaper · " +
     counts.removed + " removed, " + esc(since);
+  const age = Math.floor((Date.now() - Date.parse(data.day + "T00:00:00")) / 864e5);
+  $("stale").hidden = age < 1;
+  $("stale").textContent = age < 1 ? "" : "Data from " + shortDay(data.day) + ", " + age +
+    (age === 1 ? " day" : " days") + " old: prices and availability may have changed.";
   const rejected = Object.entries(counts.rejected);
   $("rejected-summary").textContent = "Rejected by the sieve: " + rejected.reduce((sum, entry) => sum + entry[1], 0);
   $("rejected").textContent = rejected.map(([gate, n]) => gate.replace("_", " ") + " " + n).join(" · ");
@@ -543,7 +555,7 @@ details.how .chip { margin-right: 4px; }
         card.ratio.toFixed(2) + "× district</span>");
     }
     if (card.land.value === "owned") out.push('<span class="pill good">land owned</span>');
-    if (card.land.value === "leased") out.push('<span class="pill bad">land leased</span>');
+    if (card.replanning.value === "legal") out.push('<span class="pill" title="as the listing says">replanning legalised (seller\'s word)</span>');
     const building = [card.series, card.type].filter(Boolean).join(" / ");
     if (building) out.push('<span class="pill">' + esc(building) + "</span>");
     out.push(card.company
@@ -553,12 +565,19 @@ details.how .chip { margin-right: 4px; }
       const words = CONDITION[card.model.condition];
       if (words) out.push('<span class="pill ' + (card.model.condition === "needs_renovation" || card.model.condition === "unfinished" ? "bad" : "") +
         '" title="the local model read the text and photos">' + esc(words) + " (model)</span>");
-      if (card.model.mortgage === "high" || card.model.mortgage === "critical") {
-        out.push('<span class="pill bad" title="' + esc(card.model.reasons.join(", ")) + '">mortgage risk ' + esc(card.model.mortgage) + "</span>");
-      }
     }
     return out.join("");
   };
+
+  const HEATING = { district: "city, central", house_boiler: "the house's own boiler room", own_boiler: "own boiler",
+    heat_pump: "heat pump", electric: "electric", stove: "stove", unknown: "not stated" };
+  const HOT_WATER = { central: "central", gas: "gas", boiler: "boiler", unknown: "not stated" };
+  const alertsHtml = (card) => card.alerts.length
+    ? '<div class="alerts">' + card.alerts.map((alert) => '<span class="alert ' + alert.level + '">' +
+        (alert.level === "red" ? "⚠ " : "") + esc(alert.text) + "</span>").join("") + "</div>"
+    : "";
+  const utilityHtml = (card) => '<p class="utility">Heating: <b>' + esc(HEATING[card.heating.value] || card.heating.value) +
+    "</b> · Hot water: <b>" + esc(HOT_WATER[card.hotWater.value] || card.hotWater.value) + "</b></p>";
 
   const historyHtml = (history) => {
     if (history.length < 2) return "";
@@ -587,10 +606,13 @@ details.how .chip { margin-right: 4px; }
       ? '<dl class="routes">' + data.targetNames.map((name) =>
           "<dt>" + esc(name) + "</dt><dd>" + bestHtml(card.best[name]) + "</dd>").join("") + "</dl>"
       : '<p class="history">Address not found in the register: no journeys.</p>';
-    const quotes = [card.layout.quote, card.land.quote].filter(Boolean);
-    const why = quotes.length
+    const quotes = [...new Set([card.layout.quote, card.land.quote, card.heating.quote, card.hotWater.quote,
+      card.replanning.quote, ...card.alerts.map((alert) => alert.quote)].filter(Boolean))];
+    const source = Object.entries(card.source).map(([key, value]) => esc(key) + ": " + esc(value)).join(" · ");
+    const why = quotes.length || source
       ? '<details class="why"><summary>What the listing says</summary>' +
-        quotes.map((quote) => "<p>“" + esc(quote) + "”</p>").join("") + "</details>"
+        quotes.map((quote) => "<p>“" + esc(quote) + "”</p>").join("") +
+        (source ? '<p class="source">On SS.com: ' + source + "</p>" : "") + "</details>"
       : "";
     const prices = [card.price, ...card.ads.map((ad) => ad.price)].filter((price) => price != null);
     const ads = card.ads.length
@@ -610,8 +632,8 @@ details.how .chip { margin-right: 4px; }
       '<span class="addr">' + esc(card.address || "address ?") + (card.approx ? " ≈" : "") +
       (card.district ? '<span class="district"> · ' + esc(card.district) + "</span>" : "") +
       (seenOf(card) ? '<span class="seen"> · opened</span>' : "") + "</span></div>" +
-      '<div class="facts">' + pills(card) + "</div>" + historyHtml(card.history) + routes + why + ads +
-      '<div class="foot"><span class="flags">' + esc(card.flags.join(" · ")) + "</span>" +
+      alertsHtml(card) + '<div class="facts">' + pills(card) + "</div>" + utilityHtml(card) +
+      historyHtml(card.history) + routes + why + ads + '<div class="foot">' +
       (card.lat != null ? '<button type="button" class="small-btn" data-act="map" data-id="' + esc(card.id) + '">On the map</button>' : "") +
       '<a href="' + esc(card.url) + '" target="_blank" rel="noopener" data-open="' + esc(card.id) + '">ss.com ↗</a></div></article>';
   };
