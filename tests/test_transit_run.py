@@ -16,7 +16,14 @@ from flat_searcher.library import LocalLibraryStore
 from flat_searcher.logging_config import configure_logging
 from flat_searcher.shortlist.criteria import parse_criteria
 from flat_searcher.transit.addresses import RegisterEntry
-from flat_searcher.transit.osm import OVERPASS_QUERY, reduce_streets, reduce_walk_graph
+from flat_searcher.transit.osm import (
+    OVERPASS_QUERY,
+    PLACES_QUERY,
+    reduce_drive_graph,
+    reduce_places,
+    reduce_streets,
+    reduce_walk_graph,
+)
 from flat_searcher.transit.run import TransitRun
 from flat_searcher.transit.sources import (
     CADASTRE_PACKAGE_URL,
@@ -55,6 +62,13 @@ OSM_RESPONSE = {
 }
 STREETS_URL = OVERPASS_ENDPOINTS[0] + "?data=" + quote(OVERPASS_QUERY)
 MIRROR_URL = OVERPASS_ENDPOINTS[1] + "?data=" + quote(OVERPASS_QUERY)
+PLACES_RESPONSE = {
+    "elements": [
+        {"type": "node", "id": 1, "lat": 56.9, "lon": 24.1, "tags": {"shop": "supermarket", "brand": "Rimi"}},
+        {"type": "node", "id": 2, "lat": 56.91, "lon": 24.1, "tags": {"man_made": "works"}},
+    ]
+}
+PLACES_URLS = [endpoint + "?data=" + quote(PLACES_QUERY) for endpoint in OVERPASS_ENDPOINTS]
 CADASTRE_PACKAGE = {
     "result": {
         "resources": [
@@ -101,6 +115,7 @@ class FakeOpener:
             "https://x/07.zip": b"stale",
             REGISTER_URL: REGISTER_CSV.encode("utf-8"),
             STREETS_URL: json.dumps(OSM_RESPONSE).encode("utf-8"),
+            PLACES_URLS[0]: json.dumps(PLACES_RESPONSE).encode("utf-8"),
             CADASTRE_PACKAGE_URL: json.dumps(CADASTRE_PACKAGE).encode("utf-8"),
             "https://x/building.zip": CADASTRE_ZIP,
         }
@@ -236,6 +251,75 @@ class TransitSourcesTests(TestCase):
             sources = TransitSources(Path(temp_dir), opener, NOW)
             self.assertEqual(sources.streets(), reduce_streets(OSM_RESPONSE))
             self.assertEqual(opener.calls, [STREETS_URL, MIRROR_URL])
+
+    def test_the_drive_graph_comes_from_the_same_download_and_its_age_counts(self) -> None:
+        with tempfile.TemporaryDirectory() as temp_dir:
+            opener = FakeOpener()
+            sources = TransitSources(Path(temp_dir), opener, NOW)
+            self.assertEqual(sources.drive_graph(), reduce_drive_graph(OSM_RESPONSE))
+            self.assertEqual(sources.streets(), reduce_streets(OSM_RESPONSE))
+            self.assertEqual(sources.walk_graph(), reduce_walk_graph(OSM_RESPONSE))
+            self.assertEqual(opener.calls, [STREETS_URL])
+            cached = json.loads((Path(temp_dir) / "riga-drive.json").read_text(encoding="utf-8"))
+            self.assertEqual(cached, reduce_drive_graph(OSM_RESPONSE))
+
+            _age(Path(temp_dir) / "riga-drive.json", 89)
+            TransitSources(Path(temp_dir), opener, datetime.now(timezone.utc)).streets()
+            self.assertEqual(len(opener.calls), 1)
+            _age(Path(temp_dir) / "riga-drive.json", 91)
+            TransitSources(Path(temp_dir), opener, datetime.now(timezone.utc)).streets()
+            self.assertEqual(len(opener.calls), 2)
+
+    def test_a_stale_drive_graph_outlives_a_day_when_every_mirror_is_down(self) -> None:
+        with tempfile.TemporaryDirectory() as temp_dir:
+            opener = FakeOpener()
+            TransitSources(Path(temp_dir), opener, NOW).drive_graph()
+            _age(Path(temp_dir) / "riga-drive.json", 120)
+            for endpoint in OVERPASS_ENDPOINTS:
+                opener.responses[endpoint + "?data=" + quote(OVERPASS_QUERY)] = OSError("down")
+            later = TransitSources(Path(temp_dir), opener, datetime.now(timezone.utc))
+            self.assertEqual(later.drive_graph(), reduce_drive_graph(OSM_RESPONSE))
+            self.assertEqual(len(opener.calls), 4)
+
+    def test_places_are_reduced_once_and_kept_for_a_month(self) -> None:
+        with tempfile.TemporaryDirectory() as temp_dir:
+            opener = FakeOpener()
+            sources = TransitSources(Path(temp_dir), opener, NOW)
+            self.assertEqual(sources.places(), reduce_places(PLACES_RESPONSE))
+            self.assertEqual(sources.places(), reduce_places(PLACES_RESPONSE))
+            self.assertEqual(opener.calls, [PLACES_URLS[0]])
+            self.assertEqual(os.listdir(temp_dir), ["riga-places.json"])
+
+            _age(Path(temp_dir) / "riga-places.json", 29)
+            TransitSources(Path(temp_dir), opener, datetime.now(timezone.utc)).places()
+            self.assertEqual(len(opener.calls), 1)
+            _age(Path(temp_dir) / "riga-places.json", 31)
+            TransitSources(Path(temp_dir), opener, datetime.now(timezone.utc)).places()
+            self.assertEqual(len(opener.calls), 2)
+
+    def test_places_fall_back_to_the_next_mirror_and_then_to_the_last_copy(self) -> None:
+        with tempfile.TemporaryDirectory() as temp_dir:
+            opener = FakeOpener()
+            opener.responses[PLACES_URLS[0]] = OSError("down")
+            opener.responses[PLACES_URLS[1]] = b"<html>busy</html>"
+            opener.responses[PLACES_URLS[2]] = json.dumps(PLACES_RESPONSE).encode("utf-8")
+            self.assertEqual(TransitSources(Path(temp_dir), opener, NOW).places(), reduce_places(PLACES_RESPONSE))
+            self.assertEqual(opener.calls, PLACES_URLS)
+
+            _age(Path(temp_dir) / "riga-places.json", 40)
+            opener.responses[PLACES_URLS[2]] = OSError("down")
+            later = TransitSources(Path(temp_dir), opener, datetime.now(timezone.utc))
+            self.assertEqual(later.places(), reduce_places(PLACES_RESPONSE))
+            self.assertEqual(len(opener.calls), 6)
+
+    def test_places_fail_when_no_mirror_answers_and_nothing_is_cached(self) -> None:
+        with tempfile.TemporaryDirectory() as temp_dir:
+            opener = FakeOpener()
+            for url in PLACES_URLS:
+                opener.responses[url] = OSError("down")
+            with self.assertRaises(TransitSourceError):
+                TransitSources(Path(temp_dir), opener, NOW).places()
+            self.assertEqual(os.listdir(temp_dir), [])
 
 
 BUILDINGS = {
@@ -422,3 +506,47 @@ class BuildingTests(TestCase):
             self.assertEqual(code, 0)
             self.assertIn("exact=2 approx=0 unlocated=0", output.getvalue())
             self.assertIn("buildings=2", output.getvalue())
+
+
+class SurroundedSources(FakeSources):
+    def __init__(self, places: dict | Exception | None = None) -> None:
+        super().__init__()
+        self._places = places if places is not None else {"pois": [["grocery", "Rimi", *HOME]], "areas": []}
+
+    def drive_graph(self) -> dict:
+        return {"nodes": [*HOME, *WORK], "edges": [0, 1, 900, 120, 1, 0, 900, 150]}
+
+    def places(self) -> dict:
+        if isinstance(self._places, Exception):
+            raise self._places
+        return self._places
+
+
+class SurroundingsRunTests(TestCase):
+    def _run(self, sources: FakeSources) -> tuple[dict[str, dict], int]:
+        with tempfile.TemporaryDirectory() as temp_dir:
+            store = LocalLibraryStore(Path(temp_dir))
+            listing = _listing("a1", "Mājas", "1")
+            listing["core"].update({"price_eur": 40000, "declared_rooms": 2})
+            dear = _listing("z9", "Mājas", "1")
+            dear["core"].update({"price_eur": 90000, "declared_rooms": 2})
+            store.save_listings({"a1": listing, "z9": dear, "u0": _listing("u0", "Mājas", "1")})
+            result = TransitRun(store, sources, parse_criteria(CRITERIA), NOW).run()
+            return {entry["ss_id"]: entry for entry in store.read_transit()}, result.surroundings
+
+    def test_a_flat_that_passes_the_price_gate_gets_its_surroundings(self) -> None:
+        entries, count = self._run(SurroundedSources())
+        near = entries["a1"]["surroundings"]
+        self.assertEqual(near["drive"]["targets"]["office"], {"min": 2, "km": 0.9, "back_min": 3, "back_km": 0.9})
+        self.assertNotIn("lab", near["drive"]["targets"])
+        self.assertEqual(near["walk"]["grocery"][0]["name"], "Rimi")
+        self.assertEqual(sorted(near["on_the_way"]), ["lab", "office"])
+        self.assertNotIn("surroundings", entries["z9"])
+        self.assertNotIn("surroundings", entries["u0"])
+        self.assertEqual(count, 1)
+
+    def test_a_failing_source_leaves_the_run_without_surroundings(self) -> None:
+        entries, count = self._run(SurroundedSources(places=OSError("down")))
+        self.assertEqual(sorted(entries), ["a1", "u0", "z9"])
+        self.assertFalse(any("surroundings" in entry for entry in entries.values()))
+        self.assertEqual(count, 0)

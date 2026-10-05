@@ -10,7 +10,7 @@ import re
 import shutil
 import urllib.request
 import zipfile
-from collections.abc import Callable
+from collections.abc import Callable, Mapping
 from datetime import datetime, timedelta
 from pathlib import Path
 from typing import IO, Any
@@ -18,7 +18,15 @@ from urllib.parse import quote
 
 from flat_searcher.transit.addresses import RegisterEntry, parse_register_rows
 from flat_searcher.transit.buildings import Building, parse_buildings
-from flat_searcher.transit.osm import OVERPASS_QUERY, Streets, reduce_streets, reduce_walk_graph
+from flat_searcher.transit.osm import (
+    OVERPASS_QUERY,
+    PLACES_QUERY,
+    Streets,
+    reduce_drive_graph,
+    reduce_places,
+    reduce_streets,
+    reduce_walk_graph,
+)
 
 GTFS_PACKAGE_URL = (
     "https://data.gov.lv/dati/api/3/action/package_show?id=6d78358a-0095-4ce3-b119-6cde5d0ac54f"
@@ -40,6 +48,7 @@ OVERPASS_ENDPOINTS = (
 )
 MAX_AGE = timedelta(days=7)
 STREETS_MAX_AGE = timedelta(days=90)
+PLACES_MAX_AGE = timedelta(days=30)
 USER_AGENT = "flat-searcher (+https://github.com/CHET45/flat_searcher)"
 
 GTFS_CACHE = "rs-gtfs.zip"
@@ -47,6 +56,8 @@ REGISTER_CACHE = "riga-register.json"
 BUILDINGS_CACHE = "riga-buildings.json"
 STREETS_CACHE = "riga-streets.json"
 WALK_CACHE = "riga-walk.json"
+DRIVE_CACHE = "riga-drive.json"
+PLACES_CACHE = "riga-places.json"
 
 Opener = Callable[[str], IO[bytes]]
 
@@ -142,27 +153,43 @@ class TransitSources:
         _write_atomic(path, json.dumps(buildings, ensure_ascii=False).encode("utf-8"))
 
     def streets(self) -> Streets:
-        self._openstreetmap()
-        return json.loads((self._cache_dir / STREETS_CACHE).read_text(encoding="utf-8"))
+        return self._openstreetmap(STREETS_CACHE)
 
     def walk_graph(self) -> dict[str, Any]:
-        self._openstreetmap()
-        return json.loads((self._cache_dir / WALK_CACHE).read_text(encoding="utf-8"))
+        return self._openstreetmap(WALK_CACHE)
 
-    def _openstreetmap(self) -> None:
-        paths = (self._cache_dir / STREETS_CACHE, self._cache_dir / WALK_CACHE)
-        if all(self._fresh(path, STREETS_MAX_AGE) for path in paths):
+    def drive_graph(self) -> dict[str, Any]:
+        return self._openstreetmap(DRIVE_CACHE)
+
+    def places(self) -> dict[str, Any]:
+        self._overpass(PLACES_QUERY, {PLACES_CACHE: reduce_places}, PLACES_MAX_AGE)
+        return json.loads((self._cache_dir / PLACES_CACHE).read_text(encoding="utf-8"))
+
+    def _openstreetmap(self, name: str) -> Any:
+        reducers = {
+            STREETS_CACHE: reduce_streets,
+            WALK_CACHE: reduce_walk_graph,
+            DRIVE_CACHE: reduce_drive_graph,
+        }
+        self._overpass(OVERPASS_QUERY, reducers, STREETS_MAX_AGE)
+        return json.loads((self._cache_dir / name).read_text(encoding="utf-8"))
+
+    def _overpass(
+        self, query: str, reducers: Mapping[str, Callable[[Any], object]], max_age: timedelta
+    ) -> None:
+        paths = [self._cache_dir / name for name in reducers]
+        if all(self._fresh(path, max_age) for path in paths):
             return
         failures = []
         for endpoint in OVERPASS_ENDPOINTS:
             try:
-                with self._open(f"{endpoint}?data={quote(OVERPASS_QUERY)}") as response:
+                with self._open(f"{endpoint}?data={quote(query)}") as response:
                     data = json.load(response)
             except (OSError, ValueError) as error:
                 failures.append(type(error).__name__)
                 continue
-            for path, reduced in zip(paths, (reduce_streets(data), reduce_walk_graph(data))):
-                _write_atomic(path, json.dumps(reduced, ensure_ascii=False).encode("utf-8"))
+            for path, reduce in zip(paths, reducers.values()):
+                _write_atomic(path, json.dumps(reduce(data), ensure_ascii=False).encode("utf-8"))
             return
         if not all(path.exists() for path in paths):
             raise TransitSourceError(f"no Overpass mirror answered: {', '.join(failures)}")

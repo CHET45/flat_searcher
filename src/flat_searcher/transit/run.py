@@ -10,11 +10,14 @@ from typing import Any, Protocol
 
 from flat_searcher.library import ACTIVE, LibraryStore
 from flat_searcher.shortlist.criteria import Criteria, target_definition
+from flat_searcher.shortlist.rank import expected_minutes
 from flat_searcher.transit.addresses import APPROX, EXACT, AddressIndex, Location, RegisterEntry
 from flat_searcher.transit.geometry import encode_polyline
 from flat_searcher.transit.gtfs import TransitFeed
+from flat_searcher.transit.driving import DriveGraph
 from flat_searcher.transit.journeys import Planner, Target
 from flat_searcher.transit.osm import Streets
+from flat_searcher.transit.surroundings import Places, TargetFields, surroundings, target_fields
 from flat_searcher.transit.walking import WalkGraph
 
 NEW_BUILD = "new build"
@@ -31,6 +34,10 @@ class Sources(Protocol):
 
     def buildings(self) -> Buildings: ...
 
+    def drive_graph(self) -> dict[str, Any]: ...
+
+    def places(self) -> dict[str, Any]: ...
+
     def streets(self) -> Streets: ...
 
     def walk_graph(self) -> Mapping[str, Any]: ...
@@ -45,6 +52,7 @@ class TransitResult:
     unresolved_targets: int
     reached_any: int
     buildings: int
+    surroundings: int = 0
 
 
 class TransitRun:
@@ -72,7 +80,7 @@ class TransitRun:
             else:
                 points[target.name] = (location.lat, location.lon)
 
-        feed = planner = None
+        feed = planner = walk = None
         targets: dict[str, Target] = {}
         if points and self._criteria:
             feed = TransitFeed.from_zip(
@@ -84,15 +92,17 @@ class TransitRun:
                 self._criteria.walk_m,
                 self._criteria.max_transfers,
                 self._criteria.journeys_max,
-                walk=WalkGraph.from_data(self._sources.walk_graph()),
+                walk=(walk := WalkGraph.from_data(self._sources.walk_graph())),
                 transfer_walk_m=self._criteria.transfer_walk_m,
             )
             targets = {name: planner.target(lat, lon) for name, (lat, lon) in points.items()}
 
         buildings = self._buildings()
+        around = self._around(points) if walk is not None else None
+        near_at: dict[tuple[float, float], dict[str, Any]] = {}
         computed_at = self._now.isoformat(timespec="seconds")
         counts = {EXACT: 0, APPROX: 0}
-        unlocated = reached_any = with_building = 0
+        unlocated = reached_any = with_building = with_surroundings = 0
         entries: list[dict[str, Any]] = []
         shapes_used: set[str] = set()
         stops_used: set[str] = set()
@@ -134,6 +144,12 @@ class TransitRun:
                 "window": "-".join(self._criteria.window) if self._criteria else None,
                 "computed_at": computed_at,
             }
+            if around is not None and walk is not None and self._worth_surroundings(core):
+                point = (location.lat, location.lon)
+                if point not in near_at:
+                    near_at[point] = surroundings(point, walk, *around, _first_walks(journeys))
+                entry["surroundings"] = near_at[point]
+                with_surroundings += 1
             building = _building(location, buildings)
             if building is not None:
                 entry["building"] = building
@@ -169,7 +185,29 @@ class TransitRun:
             unresolved_targets=unresolved,
             reached_any=reached_any,
             buildings=with_building,
+            surroundings=with_surroundings,
         )
+
+    def _around(
+        self, points: Mapping[str, tuple[float, float]]
+    ) -> tuple[DriveGraph, Places, dict[str, TargetFields]] | None:
+        try:
+            drive = DriveGraph.from_data(self._sources.drive_graph())
+            places = Places(self._sources.places())
+        except Exception as error:
+            logger.warning("surroundings unavailable: %s", type(error).__name__)
+            return None
+        return drive, places, {name: target_fields(drive, lat, lon) for name, (lat, lon) in points.items()}
+
+    def _worth_surroundings(self, core: Mapping[str, Any]) -> bool:
+        """Only flats that pass the price and rooms gates: the rest never reach the shortlist."""
+        if self._criteria is None:
+            return False
+        price, rooms = core.get("price_eur"), core.get("declared_rooms")
+        if not isinstance(price, (int, float)) or self._criteria.band_index(price) is None:
+            return False
+        order = self._criteria.room_order
+        return not order or rooms is None or rooms in order
 
     def _buildings(self) -> Buildings | None:
         try:
@@ -177,6 +215,16 @@ class TransitRun:
         except Exception as error:
             logger.warning("building register unavailable: %s", type(error).__name__)
             return None
+
+
+def _first_walks(journeys: Mapping[str, list[dict[str, Any]]]) -> dict[str, str]:
+    first: dict[str, str] = {}
+    for name, options in journeys.items():
+        best = min(options, key=expected_minutes, default=None)
+        walks = (best or {}).get("walks") or []
+        if walks and walks[0].get("line"):
+            first[name] = walks[0]["line"]
+    return first
 
 
 def _building(location: Location, buildings: Buildings | None) -> Mapping[str, Any] | None:
