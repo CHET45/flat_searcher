@@ -80,6 +80,11 @@ class SurroundingsTests(TestCase):
                          [("Corner", 1), ("On route", 2), ("Spur", 7)])
         self.assertEqual(found["drive"]["targets"]["office"], {"min": 4, "km": 2.4, "back_min": 4, "back_km": 2.4})
 
+    def test_the_nearest_gym_by_car(self) -> None:
+        places = Places({"pois": [["gym", "Spur gym", *ROAD[5]], ["gym", "Road gym", *ROAD[2]]], "areas": []})
+        found = surroundings(FLAT, WALK, DRIVE, places, {}, {})
+        self.assertEqual([(p["name"], p["min"], p["km"]) for p in found["drive"]["gym"]], [("Road gym", 2, 1.2)])
+
     def test_a_shop_on_the_route_is_on_the_way_and_one_up_a_spur_is_not(self) -> None:
         way = self._found()["on_the_way"]["office"]
         self.assertEqual(way["there"]["grocery"]["name"], "On route")

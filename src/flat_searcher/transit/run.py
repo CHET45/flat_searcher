@@ -5,7 +5,7 @@ from __future__ import annotations
 import logging
 from dataclasses import dataclass
 from datetime import datetime
-from collections.abc import Mapping
+from collections.abc import Mapping, Sequence
 from typing import Any, Protocol
 
 from flat_searcher.library import ACTIVE, LibraryStore
@@ -17,7 +17,7 @@ from flat_searcher.transit.gtfs import TransitFeed
 from flat_searcher.transit.driving import DriveGraph
 from flat_searcher.transit.journeys import Planner, Target
 from flat_searcher.transit.osm import Streets
-from flat_searcher.transit.surroundings import Places, TargetFields, surroundings, target_fields
+from flat_searcher.transit.surroundings import Place, Places, TargetFields, surroundings, target_fields
 from flat_searcher.transit.walking import WalkGraph
 
 NEW_BUILD = "new build"
@@ -99,6 +99,8 @@ class TransitRun:
 
         buildings = self._buildings()
         around = self._around(points) if walk is not None else None
+        gyms = (around[1].by_category.get("gym") or []) if around is not None else []
+        gym_target = planner.nearest([(gym.lat, gym.lon) for gym in gyms]) if planner and gyms else None
         near_at: dict[tuple[float, float], dict[str, Any]] = {}
         computed_at = self._now.isoformat(timespec="seconds")
         counts = {EXACT: 0, APPROX: 0}
@@ -148,6 +150,8 @@ class TransitRun:
                 point = (location.lat, location.lon)
                 if point not in near_at:
                     near_at[point] = surroundings(point, walk, *around, _first_walks(journeys))
+                    if planner is not None:
+                        near_at[point]["transit"] = {"gym": _by_transit(planner, gym_target, gyms, point)}
                 entry["surroundings"] = near_at[point]
                 with_surroundings += 1
             building = _building(location, buildings)
@@ -225,6 +229,24 @@ def _first_walks(journeys: Mapping[str, list[dict[str, Any]]]) -> dict[str, str]
         if walks and walks[0].get("line"):
             first[name] = walks[0]["line"]
     return first
+
+
+def _by_transit(
+    planner: Planner, target: Target | None, places: Sequence[Place], point: tuple[float, float]
+) -> list[dict[str, Any]]:
+    if target is None or not (options := planner.options(target, *point)):
+        return []
+    best = options[0]
+    return [
+        {
+            **places[target.point_of(best)].as_dict(),
+            "min": best.minutes,
+            "every_min": best.every_min,
+            "transfers": best.transfers,
+            "walk_m": best.walk_m,
+            "routes": [list(leg.routes) for leg in best.legs],
+        }
+    ]
 
 
 def _building(location: Location, buildings: Buildings | None) -> Mapping[str, Any] | None:

@@ -19,7 +19,7 @@ from flat_searcher.transit.walking import WalkGraph
 
 WALK_LIMIT_M = 2500
 WALK_NEAREST = {"grocery": 3, "gym": 3, "mall": 1}
-DRIVE_NEAREST = {"grocery": 3, "diy": 3, "mall": 2}
+DRIVE_NEAREST = {"grocery": 3, "diy": 3, "mall": 2, "gym": 1}
 DRIVE_RADIUS_M = 15000
 ON_THE_WAY_S = {"grocery": 180, "mall": 180, "diy": 300}
 WALK_PATH_M = 100

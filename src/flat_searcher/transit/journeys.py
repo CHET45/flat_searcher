@@ -79,11 +79,14 @@ class Journey:
 
 @dataclass
 class Target:
-    point: Point
-    stop_distances: dict[str, float]
+    """Each stop near a target point leads on foot to the point it is the shortest walk from."""
+
+    egress: dict[str, tuple[int, Walk]]
     runs: list[Labels]
     templates: dict[tuple[int, int, str], tuple[LegTemplate, ...]]
-    field: WalkField | None
+
+    def point_of(self, journey: Journey) -> int:
+        return self.egress[journey.legs[-1].alight][0]
 
 
 class Planner:
@@ -113,23 +116,27 @@ class Planner:
         self._timetables: dict[tuple[str, str, str], tuple[list[int], list[int]]] = {}
 
     def target(self, lat: float, lon: float) -> Target:
-        distances = self._feed.stops_near(lat, lon, self._walk_m)
-        field = self._walk.field(lat, lon, self._walk_m * FIELD_REACH) if self._walk else None
+        return self.nearest([(lat, lon)])
+
+    def nearest(self, points: Sequence[Point]) -> Target:
+        """One target for many points: a journey ends at whichever of them it reaches first."""
+        egress: dict[str, tuple[int, Walk]] = {}
+        for index, point in enumerate(points):
+            field = self._walk.field(*point, self._walk_m * FIELD_REACH) if self._walk else None
+            for stop in self._feed.stops_near(*point, self._walk_m):
+                walk = self._walk_to(field, point, stop)
+                if stop not in egress or walk.m < egress[stop][1].m:
+                    egress[stop] = (index, walk)
         runs: list[Labels] = []
         start, end = self._window
         for deadline in range(start, end + DEADLINE_SLACK_S + 1, DEADLINE_STEP_S):
-            origins = {
-                stop: -(deadline - _seconds(self._walk_to(field, (lat, lon), stop)))
-                for stop in distances
-            }
+            origins = {stop: -(deadline - _seconds(walk)) for stop, (_, walk) in egress.items()}
             runs.append(self._backward.raptor(origins, self._rounds))
-        return Target(
-            point=(lat, lon), stop_distances=distances, runs=runs, templates={}, field=field
-        )
+        return Target(egress=egress, runs=runs, templates={})
 
     def options(self, target: Target, lat: float, lon: float) -> list[Journey]:
         home = self._feed.stops_near(lat, lon, self._walk_m)
-        if not home or not target.stop_distances:
+        if not home or not target.egress:
             return []
         templates: set[tuple[LegTemplate, ...]] = set()
         for run_index, labels in enumerate(target.runs):
@@ -214,7 +221,7 @@ class Planner:
                 self._stop_walk(alight, next_board)
                 for (_, alight), (next_board, _) in zip(pairs, pairs[1:])
             ),
-            _reversed(self._walk_to(target.field, target.point, pairs[-1][1])),
+            _reversed(target.egress[pairs[-1][1]][1]),
         ]
         transfers = [max(MIN_TRANSFER_S, _seconds(walk)) for walk in walks[1:-1]]
         first_departures, first_arrivals = timetables[0]

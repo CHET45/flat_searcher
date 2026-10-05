@@ -55,6 +55,23 @@ class PlannerTests(TestCase):
         planner = _planner()
         self.assertEqual(planner.options(planner.target(*point(*TARGET_ONE)), 57.5, 25.0), [])
 
+    def test_a_target_of_several_points_ends_at_whichever_is_reached_first(self) -> None:
+        planner = _planner()
+        target = planner.nearest([point(*TARGET_TWO), point(*TARGET_ONE)])
+        options = planner.options(target, *point(*FLAT))
+        self.assertEqual([[leg.routes for leg in option.legs] for option in options],
+                         [[("bus 1", "bus 5")], [("bus 8",)]])
+        self.assertEqual((options[0].minutes, options[0].walk_m), (13, 260))
+        self.assertEqual([target.point_of(option) for option in options], [1, 1])
+        alone = planner.nearest([point(*TARGET_TWO)])
+        self.assertEqual([alone.point_of(option) for option in planner.options(alone, *point(*FLAT))], [0])
+
+    def test_a_stop_near_several_points_serves_the_nearest(self) -> None:
+        planner = _planner()
+        target = planner.nearest([point(4000, 400), point(*TARGET_ONE)])
+        option = planner.options(target, *point(*FLAT))[0]
+        self.assertEqual((target.point_of(option), option.walk_m), (1, 260))
+
     def test_options_serialise_by_stop_id(self) -> None:
         planner = _planner()
         option = planner.options(planner.target(*point(*TARGET_TWO)), *point(*FLAT))[0]

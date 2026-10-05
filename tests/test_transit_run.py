@@ -545,6 +545,19 @@ class SurroundingsRunTests(TestCase):
         self.assertNotIn("surroundings", entries["u0"])
         self.assertEqual(count, 1)
 
+    def test_the_nearest_gym_by_transit_is_the_first_one_reached(self) -> None:
+        places = {"pois": [["gym", "Lab gym", *point(*TARGET_TWO)], ["gym", "Office gym", *WORK]], "areas": []}
+        entries, _ = self._run(SurroundedSources(places=places))
+        office = entries["a1"]["targets"]["office"][0]
+        self.assertEqual(entries["a1"]["surroundings"]["transit"], {"gym": [{
+            "name": "Office gym", "lat": WORK[0], "lon": WORK[1], "min": 13, "every_min": 8,
+            "transfers": 0, "walk_m": office["walk_m"], "routes": [["bus 1", "bus 5"]],
+        }]})
+
+    def test_without_a_gym_there_is_no_transit_entry_to_one(self) -> None:
+        entries, _ = self._run(SurroundedSources())
+        self.assertEqual(entries["a1"]["surroundings"]["transit"], {"gym": []})
+
     def test_a_failing_source_leaves_the_run_without_surroundings(self) -> None:
         entries, count = self._run(SurroundedSources(places=OSError("down")))
         self.assertEqual(sorted(entries), ["a1", "u0", "z9"])
