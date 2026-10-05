@@ -213,6 +213,7 @@ size = 20                      # default
 max_minutes = 120              # sum over targets of minutes + every/2; default: no cap
 exclude_walkthrough = true     # default
 exclude_leased_land = true     # default
+exclude_illegal_replanning = true  # default: the seller says a replanning is not legalised
 ```
 
 `transit` records how each target was defined. `digest` refuses to run when a target was added,
@@ -224,7 +225,13 @@ the Rīgas Satiksme GTFS feed (newest monthly archive of the data.gov.lv timetab
 the VZD state address register (`aw_eka.csv`, ~140 MB; only existing Riga buildings are kept,
 ~49k), both for seven days, and Riga's streets from the Overpass API (roads, railways, water;
 reduced to ~0.5 MB of encoded polylines) for ninety days, with two mirrors and the stale copy
-as the last resort. SS.com addresses are matched against the register: first names dropped by
+as the last resort. The VZD cadastre's open building data (`building.zip`, ~240 MB, weekly,
+CC BY 4.0) is reduced to Riga's apartment buildings (use codes 112x) and cached as
+`riga-buildings.json` for seven days: wear group V1–V5 with its survey date, year built,
+floors and wall material, joined to a listing through the register's address code; several
+apartment buildings at one address give the worst group. Only exact matches get building data;
+a failed download leaves it out and the run goes on (`buildings=N` counts the listings with it).
+SS.com addresses are matched against the register: first names dropped by
 SS.com, abbreviated street types, block numbers (`k-1`) and `59/61` numbers are handled. A
 missing house number falls back to the nearest number on the same street (`approx`, shown as ≈).
 
@@ -247,9 +254,19 @@ and reported as the rarest leg. Options sort by minutes plus half the headway, t
 time when leaving at a random moment. A target is reached *directly* when an option has no
 transfer; that count still orders the digest.
 
-**Gates**, in order: price above `max_eur`, rooms outside `order` (unknown rooms pass), an
-excluded building type, stove heating stated in the text, a sale as a share of property
-("pārdod kā domājamā daļa"; the ordinary land share of a flat does not count).
+**Gates**, in order: price above `max_eur`, rooms outside `order` (unknown rooms pass), a floor
+listed in `[floor] exclude`, an excluded building type, stove heating as the only heating the
+text names, a sale as a share of property ("pārdod kā domājamā daļa"; the ordinary land share
+of a flat does not count).
+
+**Facts read from the text** (regular expressions over the title, description and fields, each
+with the sentence it came from): heating source — city/central, the house's own boiler room,
+own boiler, heat pump, electric, stove — where a specific source beats the word "central";
+stove heating even beside another system, or a stove merely present; hot water — central, gas,
+boiler — never merged with heating; replanning — not legalised, legalised, done without a stated
+status, none — where possibilities ("iespējama pārplānošana"), works on the building and a
+kitchen open to the living room in a new build (series `Jaun.`, `Renov.`) do not count. These
+are the seller's words, not a check of any register.
 
 **Ordering**, no score: price band (list order) → rooms (list order, unknown last) → layout
 (isolated from the text › isolated by series prior › unknown › walk-through by series ›
@@ -257,9 +274,11 @@ walk-through from the text) → number of targets reached directly → €/m² r
 district median → price. Every column of that key is shown in the digest row.
 
 **Digest marks**: ★ first seen after the previous digest, ↓ price dropped after the previous
-digest. Removed candidates are counted in the header. **Flags**: stove mentioned, land leased
-(a lease that is not negated, land not or only partly owned, a denationalised house), price
-below 0.4× the district's €/m², under 20 m².
+digest. Removed candidates are counted in the header. **Alerts**, red: stove heating, a replanning the seller calls not legalised, land leased (a lease
+that is not negated, land not or only partly owned, a denationalised house), building wear V4 or
+V5, the model's mortgage risk high or critical; amber: a stove in the flat, a replanning without
+a stated status, heating from an own boiler or the house's boiler room, price below 0.4× the
+district's €/m², under 20 m². The digest has a wear column (group and survey year).
 
 **Digest page**: `digest` also writes the folder `digest/<day>/`: `index.html` (the cards'
 data inline, ~0.15 MB gzipped), `map.js` (every journey option with its walks, route shapes,
@@ -270,13 +289,18 @@ without either) and `photos/<ss_id>.jpg` (thumbnails, `.t.jpg`, ~5 KB, cached un
 - One card per flat: ads with the same building, floor, area and rooms and prices within 10 %
   share a card that lists the other ads and their prices.
 - **Today** (the default view): candidates that pass the soft rules of `[today]`, a way to every
-  target and no implausible-price or room-size flag; among them the flats no other beats at once
-  on price, the summed expected journey time and floor area, then flats beaten only by those,
+  target and no implausible-price or room-size alert; among them the flats no other beats at once
+  on price, the summed expected journey time, floor area and building wear (V1–V5; a new build
+  not yet in the cadastre counts as V1, an unknown house as V3), then flats beaten only by those,
   up to `size`. **All** shows every candidate in the digest's order.
 - A card shows, per target, the option with the shortest expected time (minutes + every/2) on
-  one line: route chips, minutes, every N, changes, walk. It adds price history, company or
-  private ad, land owned or leased, the local model's condition and mortgage risk when a
-  verdict exists, and the listing's own words behind the layout and land facts.
+  one line: route chips, minutes, every N, changes, walk. Alerts come first, under the address.
+  The card adds price history, company or private ad, land owned, the local model's condition
+  when a verdict exists, a heating and hot-water line, a building line (year, floors, wear and
+  its survey year), and under "What the listing says" the sentences behind every fact plus
+  SS.com's own values (price, area, rooms, floor, series, type, street).
+- A page whose data is older than a day says so at the top. Turning the phone keeps the card
+  that was at the top of the screen in place.
 - ★ favourite, ✕ hide and "opened" (set on opening the ad or its map) are stored in the
   browser, per ad, for every ad of the flat, and survive daily updates; so does the day of the
   previous visit for "new or cheaper since my last visit".
