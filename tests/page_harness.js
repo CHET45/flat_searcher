@@ -1,6 +1,8 @@
 "use strict";
 // Runs the digest page's script against a minimal DOM stand-in, with no network:
 // every external script (Leaflet, map.js) fails to load. Prints what the list shows.
+// Timers and animation frames run on a virtual clock that only a "wait" action moves, in due order,
+// so timing races in the page are the same on every run and every platform.
 // Usage: node page_harness.js <index.html> '<actions JSON>' '<localStorage JSON>' [now ISO]
 const fs = require("fs");
 
@@ -80,10 +82,32 @@ global.getComputedStyle = () => ({ getPropertyValue: () => "#123456" });
 global.scrollTo = () => {};
 global.innerWidth = 375;
 global.scrollBy = (x, y) => scrolled.push([x, y]);
+let clock = 0;
+let lastTimer = 0;
+const timers = new Map();
+global.setTimeout = (callback, delay, ...args) => {
+  timers.set(++lastTimer, { due: clock + Math.max(0, Number(delay) || 0), run: () => callback(...args) });
+  return lastTimer;
+};
+global.clearTimeout = (id) => timers.delete(id);
 global.requestAnimationFrame = (callback) => setTimeout(callback, 16);
 global.addEventListener = (type, listener) => (windowListeners[type] = windowListeners[type] || []).push(listener);
 
-const settle = () => new Promise((resolve) => setTimeout(resolve, 5));
+const microtasks = () => new Promise((resolve) => setImmediate(resolve));
+const advance = async (ms) => {
+  const end = clock + ms;
+  for (;;) {
+    await microtasks();
+    let next = null;
+    for (const [id, timer] of timers) if (timer.due <= end && (!next || timer.due < next.due)) next = { id, ...timer };
+    if (!next) break;
+    timers.delete(next.id);
+    clock = next.due;
+    next.run();
+  }
+  clock = end;
+};
+const settle = () => advance(0);
 const target = (action) => ({
   closest: (selector) => {
     if (selector.startsWith("a[")) return action.open ? { dataset: { open: action.open } } : null;
@@ -103,7 +127,7 @@ const target = (action) => ({
     } else if (action.event) {
       for (const listener of windowListeners[action.event] || []) listener({});
     } else if (action.wait) {
-      await new Promise((resolve) => setTimeout(resolve, action.wait));
+      await advance(action.wait);
     } else if (action.change) {
       const element = document.getElementById(action.change);
       if ("value" in action) element.value = action.value;

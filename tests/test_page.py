@@ -402,9 +402,12 @@ class PageScriptTests(TestCase):
         clamped_first = turn[:4] + [{"width": 812}, {"layout": landscape}, {"event": "scroll"}, {"wait": 20},
                                     {"event": "resize"}, {"wait": 300}]
         self.assertEqual(self._run(self._flats(), clamped_first)["scrolled"], [[0, -400]])
-        late_resize = turn[:4] + [{"layout": landscape}, {"event": "resize"}, {"wait": 205}, {"event": "resize"},
+        late_resize = turn[:4] + [{"layout": landscape}, {"event": "resize"}, {"wait": 230}, {"event": "resize"},
                                   {"wait": 400}]
         self.assertEqual(self._run(self._flats(), late_resize)["scrolled"], [[0, -400]])
+        after_restore = turn[:4] + [{"layout": landscape}, {"event": "resize"}, {"wait": 240}, {"event": "resize"},
+                                    {"wait": 400}]
+        self.assertEqual(self._run(self._flats(), after_restore)["scrolled"], [[0, -400], [0, 0]])
         self.assertEqual(self._run(self._flats(), turn[:2] + turn[4:])["scrolled"], [])
 
     def test_the_card_tells_what_is_near_on_the_way_and_around_and_sorts_by_the_nearest_grocery(self) -> None:
