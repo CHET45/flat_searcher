@@ -15,7 +15,7 @@ def _option(minutes: int, every: int = 10) -> dict:
 
 
 def _flat(ss_id: str, price: int = 35000, minutes: int = 25, area: float = 50, floor: int = 3,
-          description: str = "", ratio: float = 1.0, campus: list | None = None):
+          description: str = "", ratio: float = 1.0, campus: list | None = None, building: dict | None = None):
     record = {
         "ss_id": ss_id,
         "status": "active",
@@ -25,6 +25,8 @@ def _flat(ss_id: str, price: int = 35000, minutes: int = 25, area: float = 50, f
     }
     transit = {"targets": {"office": [_option(minutes)],
                            "campus": [_option(minutes)] if campus is None else campus}}
+    if building is not None:
+        transit["building"] = building
     return evaluate(record, CRITERIA, transit)
 
 
@@ -72,3 +74,14 @@ class TodayTests(TestCase):
     def test_the_view_stops_at_its_size_in_the_suggested_order(self) -> None:
         flats = [_flat("a", price=30000, area=40), _flat("b", price=40000, area=60), _flat("c", price=50000)]
         self.assertEqual(_picks(flats, replace(RULES, size=2)), [("a", 1), ("b", 1)])
+
+    def test_building_wear_is_a_fourth_dimension_and_a_better_house_beats_a_worse_one(self) -> None:
+        flats = [
+            _flat("worn", building={"wear": "V4"}),
+            _flat("sound", building={"wear": "V2"}),
+            _flat("new", building={"note": "new build"}),
+            _flat("unknown"),
+        ]
+        self.assertEqual(_picks(flats), [("new", 1), ("sound", 2), ("unknown", 3), ("worn", 4)])
+        cheaper_but_worn = [_flat("worn", price=30000, building={"wear": "V4"}), _flat("sound", building={"wear": "V2"})]
+        self.assertEqual(_picks(cheaper_but_worn), [("worn", 1), ("sound", 1)])

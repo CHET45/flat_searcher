@@ -8,7 +8,7 @@ CRITERIA = parse_criteria("[price]\nmax_eur = 100000\n")
 
 
 def _alerts(description: str = "", area: float = 50, ratio: float = 1.0, judgment: dict | None = None,
-            series: str = "P. kara") -> list[Alert]:
+            series: str = "P. kara", building: dict | None = None) -> list[Alert]:
     record = {
         "ss_id": "x",
         "status": "active",
@@ -18,7 +18,8 @@ def _alerts(description: str = "", area: float = 50, ratio: float = 1.0, judgmen
         "market": {"price_per_m2": 1000 * ratio, "district_median_price_per_m2": 1000},
         "judgment": judgment or {},
     }
-    return alerts_for(evaluate(record, CRITERIA, None))
+    transit = {"precision": "exact", "targets": {}, "building": building} if building else None
+    return alerts_for(evaluate(record, CRITERIA, transit))
 
 
 def _texts(alerts: list[Alert]) -> list[tuple[str, str]]:
@@ -47,8 +48,8 @@ class AlertTests(TestCase):
     def test_leased_land_and_a_high_mortgage_risk_are_red(self) -> None:
         self.assertEqual(_texts(_alerts("Zeme zem mājas ir nomā.")), [("red", "land leased")])
         alerts = _alerts(judgment={"mortgage_risk": "critical", "mortgage_reasons": ["share sale", "no plan"]})
-        self.assertEqual(_texts(alerts), [("red", "mortgage risk critical")])
-        self.assertEqual(alerts[0].quote, "share sale, no plan")
+        self.assertEqual(_texts(alerts), [("red", "mortgage risk critical (model: share sale, no plan)")])
+        self.assertIsNone(alerts[0].quote)
         self.assertEqual(_alerts(judgment={"mortgage_risk": "medium", "mortgage_reasons": []}), [])
 
     def test_a_heating_source_other_than_the_city_is_amber(self) -> None:
@@ -60,6 +61,15 @@ class AlertTests(TestCase):
     def test_an_implausible_price_and_a_room_sized_flat_are_amber(self) -> None:
         self.assertEqual(_texts(_alerts(ratio=0.3)), [("amber", "price < 0.4× district")])
         self.assertEqual(_texts(_alerts(area=18)), [("amber", "under 20 m²")])
+
+    def test_unsatisfactory_and_critical_building_wear_are_red(self) -> None:
+        self.assertEqual(
+            _texts(_alerts(building={"wear": "V4", "wear_date": "2019-03-02"})),
+            [("red", "building wear V4, unsatisfactory: check with the bank")],
+        )
+        self.assertEqual(_texts(_alerts(building={"wear": "V5"})), [("red", "building wear V5, critical")])
+        self.assertEqual(_alerts(building={"wear": "V3"}), [])
+        self.assertEqual(_alerts(building={"note": "new build"}), [])
 
     def test_red_comes_before_amber(self) -> None:
         alerts = _alerts("Autonoma gāzes apkure. Zeme zem mājas ir nomā.", area=18)

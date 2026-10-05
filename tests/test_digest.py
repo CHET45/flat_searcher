@@ -175,3 +175,16 @@ class DigestTests(TestCase):
         self.assertNotIn("price <", _row(text, "owned"))
         self.assertIn("under 20 m²", _row(text, "tiny"))
         self.assertNotIn("under 20 m²", _row(text, "owned"))
+
+    def test_the_wear_column_shows_the_cadastre_group_and_its_survey_year(self) -> None:
+        transit = [
+            {"ss_id": "worn", "precision": "exact", "targets": {},
+             "building": {"wear": "V4", "wear_date": "2004-05-01", "built": 1962}},
+            {"ss_id": "new", "precision": "exact", "targets": {}, "building": {"note": "new build"}},
+        ]
+        text, _ = _build([_record("worn"), _record("new"), _record("none")], transit=transit)
+        self.assertIn("| wear |", next(line for line in text.splitlines() if line.startswith("| ")))
+        self.assertIn("| V4 (2004) |", _row(text, "worn"))
+        self.assertIn("building wear V4, unsatisfactory: check with the bank", _row(text, "worn"))
+        self.assertIn("| new build |", _row(text, "new"))
+        self.assertIn("| ? |", _row(text, "none"))

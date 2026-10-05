@@ -166,6 +166,9 @@ class RenderPageTests(TestCase):
         self.assertEqual(card["source"], {"Cena": "35 000 € (700 €/m²)", "Platība": "50 m²", "Istabas": "2",
                                           "Stāvs": "3/5", "Sērija": "P. kara"})
         self.assertNotIn("flags", card)
+        self.assertEqual(card["building"], {})
+        built = _cards(_page([_record("b")], [{**_located("b"), "building": {"wear": "V3", "wear_date": "2019-03-02", "built": 1975, "floors": 9}}]))["b"]
+        self.assertEqual(built["building"], {"wear": "V3", "wear_date": "2019-03-02", "built": 1975, "floors": 9})
 
     def test_the_card_shows_the_option_with_the_shortest_expected_time(self) -> None:
         page = _page([_record("a")], [_located("a", office=[RARE, SLOW, JOURNEY])])
@@ -323,7 +326,9 @@ class PageScriptTests(TestCase):
     def test_alerts_open_the_card_and_the_heating_line_follows_the_pills(self) -> None:
         listings = [_record("stove", description="Centrālā apkure. Istabā arī krāsns apkure."),
                     _record("plain", house="2", description="Mājā ir centrālā apkure.")]
-        listed = self._run(_page(listings, [_located("stove"), _located("plain")]), [{"click": "view-all"}])["list"]
+        building = {"wear": "V4", "wear_date": "2019-03-02", "built": 1975, "floors": 9}
+        transit = [{**_located("stove"), "building": building}, _located("plain")]
+        listed = self._run(_page(listings, transit), [{"click": "view-all"}])["list"]
         cards = {}
         for part in listed.split("<article")[1:]:
             found = re.search(r'id="c-([^"]+)"', part)
@@ -333,7 +338,10 @@ class PageScriptTests(TestCase):
         self.assertLess(cards["stove"].index('class="alerts"'), cards["stove"].index('class="facts"'))
         self.assertIn("Heating: <b>city, central</b> · Hot water: <b>not stated</b>", cards["stove"])
         self.assertIn("“istabā arī krāsns apkure.”", cards["stove"])
+        self.assertIn("⚠ building wear V4, unsatisfactory: check with the bank", cards["stove"])
+        self.assertIn("Building: built 1975 · 9 floors · wear <b>V4 unsatisfactory</b> (VZD 2019)", cards["stove"])
         self.assertNotIn('class="alerts"', cards["plain"])
+        self.assertNotIn("Building:", cards["plain"])
 
     def test_sorting_by_price_reorders_the_cards(self) -> None:
         shown = self._run(self._flats(), [{"click": "view-all"}, {"change": "f-sort", "value": "area"}])

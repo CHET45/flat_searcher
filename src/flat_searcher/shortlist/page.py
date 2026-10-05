@@ -173,6 +173,7 @@ def _card(
         "hotWater": _fact(item.hot_water),
         "replanning": _fact(item.replanning),
         "source": {key: fields[key] for key in SOURCE_FIELDS if fields.get(key)},
+        "building": dict(item.building),
         "today": today.get(item.ss_id),
         "photo": None,
     }

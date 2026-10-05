@@ -18,6 +18,7 @@ DROP_MARK = "↓"
 APPROX_MARK = "≈"
 NO_ROUTE = "—"
 UNKNOWN_CELL = "?"
+COLUMNS = ("", "€", "m²", "€/m² vs district", "address", "district", "series / type", "floor", "wear", "layout")
 
 
 @dataclass(frozen=True)
@@ -95,7 +96,7 @@ def render_markdown(selection: Selection, criteria: Criteria, day: str) -> str:
         selection.candidates, key=lambda item: (item.band, item.rooms_index)
     ):
         lines += [f"## {section_label(criteria, band, rooms_index)}", ""]
-        lines += [_header(targets), "|" + " --- |" * (11 + len(targets))]
+        lines += [_header(targets), "|" + " --- |" * len(_columns(targets))]
         for item in group:
             marks = (NEW_MARK if item.ss_id in selection.new_ids else "") + (
                 DROP_MARK if item.ss_id in selection.drop_ids else ""
@@ -168,9 +169,12 @@ def _rooms_label(criteria: Criteria, rooms_index: int) -> str:
     return f"{rooms} room" if rooms == 1 else f"{rooms} rooms"
 
 
+def _columns(targets: list[str]) -> list[str]:
+    return [*COLUMNS, *targets, "flags", "link"]
+
+
 def _header(targets: list[str]) -> str:
-    columns = ["", "€", "m²", "€/m² vs district", "address", "district", "series / type", "floor", "layout"]
-    return "| " + " | ".join([*columns, *targets, "flags", "link"]) + " |"
+    return "| " + " | ".join(_columns(targets)) + " |"
 
 
 def _row(item: Evaluation, marks: str, targets: list[str], located: bool) -> str:
@@ -189,6 +193,7 @@ def _row(item: Evaluation, marks: str, targets: list[str], located: bool) -> str
         _plain(core.get("district")),
         f"{_plain(core.get('building_series'))} / {_plain(core.get('building_type'))}",
         f"{_plain(core.get('floor'))}/{_plain(core.get('total_floors'))}",
+        wear_label(item.building),
         layout,
         *(
             ("; ".join(journey_label(option) for option in item.journeys.get(name) or []) or NO_ROUTE)
@@ -200,6 +205,13 @@ def _row(item: Evaluation, marks: str, targets: list[str], located: bool) -> str
         f"[ss]({item.record.get('url')})",
     ]
     return "| " + " | ".join(_escape(str(cell)) for cell in cells) + " |"
+
+
+def wear_label(building: Mapping[str, Any]) -> str:
+    if building.get("wear"):
+        surveyed = str(building.get("wear_date") or "")[:4]
+        return f"{building['wear']} ({surveyed})" if surveyed else str(building["wear"])
+    return str(building.get("note") or UNKNOWN_CELL)
 
 
 def journey_label(option: Mapping[str, Any]) -> str:

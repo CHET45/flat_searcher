@@ -578,6 +578,17 @@ details.how .chip { margin-right: 4px; }
     : "";
   const utilityHtml = (card) => '<p class="utility">Heating: <b>' + esc(HEATING[card.heating.value] || card.heating.value) +
     "</b> · Hot water: <b>" + esc(HOT_WATER[card.hotWater.value] || card.hotWater.value) + "</b></p>";
+  const WEAR = { V1: "very good", V2: "good", V3: "satisfactory", V4: "unsatisfactory", V5: "critical" };
+  const buildingHtml = (building) => {
+    const surveyed = building.wear_date ? " " + esc(building.wear_date.slice(0, 4)) : ", survey date not recorded";
+    const parts = [
+      building.built ? "built " + esc(building.built) : "",
+      building.floors ? esc(building.floors) + " floors" : "",
+      building.wear ? "wear <b>" + esc(building.wear) + " " + esc(WEAR[building.wear] || "") + "</b> (VZD" + surveyed + ")" : "",
+      building.note === "new build" ? "new build, not yet in the cadastre" : esc(building.note || ""),
+    ].filter(Boolean);
+    return parts.length ? '<p class="utility">Building: ' + parts.join(" · ") + "</p>" : "";
+  };
 
   const historyHtml = (history) => {
     if (history.length < 2) return "";
@@ -632,7 +643,7 @@ details.how .chip { margin-right: 4px; }
       '<span class="addr">' + esc(card.address || "address ?") + (card.approx ? " ≈" : "") +
       (card.district ? '<span class="district"> · ' + esc(card.district) + "</span>" : "") +
       (seenOf(card) ? '<span class="seen"> · opened</span>' : "") + "</span></div>" +
-      alertsHtml(card) + '<div class="facts">' + pills(card) + "</div>" + utilityHtml(card) +
+      alertsHtml(card) + '<div class="facts">' + pills(card) + "</div>" + utilityHtml(card) + buildingHtml(card.building) +
       historyHtml(card.history) + routes + why + ads + '<div class="foot">' +
       (card.lat != null ? '<button type="button" class="small-btn" data-act="map" data-id="' + esc(card.id) + '">On the map</button>' : "") +
       '<a href="' + esc(card.url) + '" target="_blank" rel="noopener" data-open="' + esc(card.id) + '">ss.com ↗</a></div></article>';

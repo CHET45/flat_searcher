@@ -20,6 +20,9 @@ from flat_searcher.shortlist.facts import (
     stove_fact,
 )
 
+WEAR_GROUPS = ("V1", "V2", "V3", "V4", "V5")
+NEW_BUILD = "new build"
+UNKNOWN_WEAR = 3
 GATES = ("price", "rooms", "floor", "building_type", "stove", "share")
 
 
@@ -39,6 +42,7 @@ class Evaluation:
     journeys: dict[str, list[dict[str, Any]]] = field(default_factory=dict)
     precision: str | None = None
     price_ratio: float | None = None
+    building: Mapping[str, Any] = field(default_factory=dict)
 
     @property
     def reached(self) -> int:
@@ -85,6 +89,7 @@ def evaluate(
         journeys=dict((transit or {}).get("targets") or {}),
         precision=(transit or {}).get("precision"),
         price_ratio=_price_ratio(record),
+        building=dict((transit or {}).get("building") or {}),
     )
 
 
@@ -99,6 +104,14 @@ def sort_key(evaluation: Evaluation) -> tuple[Any, ...]:
         price,
         evaluation.ss_id,
     )
+
+
+def wear_group(building: Mapping[str, Any]) -> int:
+    """1 (very good) to 5 (critical); a new build not yet in the cadastre is 1, an unknown house the middle."""
+    wear = building.get("wear")
+    if wear in WEAR_GROUPS:
+        return WEAR_GROUPS.index(wear) + 1
+    return 1 if building.get("note") == NEW_BUILD else UNKNOWN_WEAR
 
 
 def expected_minutes(option: Mapping[str, Any]) -> float:

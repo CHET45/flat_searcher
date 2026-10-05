@@ -11,6 +11,10 @@ from flat_searcher.shortlist.rank import Evaluation
 IMPLAUSIBLE_RATIO = 0.4
 ROOM_SIZED_M2 = 20
 HIGH_MORTGAGE_RISK = ("high", "critical")
+WEAR_ALERTS = {
+    "V4": "building wear V4, unsatisfactory: check with the bank",
+    "V5": "building wear V5, critical",
+}
 HEATING_ALERTS = {
     "own_boiler": "heating: own boiler",
     "house_boiler": "heating: the house's own boiler room",
@@ -37,10 +41,14 @@ def alerts_for(item: Evaluation) -> list[Alert]:
         amber.append(_alert("amber", "replanning: check the documents", item.replanning))
     if item.land.value == "leased":
         red.append(_alert("red", "land leased", item.land))
+    wear = item.building.get("wear")
+    if wear in WEAR_ALERTS:
+        red.append(Alert("red", WEAR_ALERTS[wear]))
     judgment = item.record.get("judgment") or {}
     if judgment.get("mortgage_risk") in HIGH_MORTGAGE_RISK:
         reasons = ", ".join(str(reason) for reason in judgment.get("mortgage_reasons") or [])
-        red.append(Alert("red", f"mortgage risk {judgment['mortgage_risk']}", reasons or None))
+        said = f" (model: {reasons})" if reasons else " (model)"
+        red.append(Alert("red", f"mortgage risk {judgment['mortgage_risk']}{said}"))
     if item.heating.value in HEATING_ALERTS:
         amber.append(_alert("amber", HEATING_ALERTS[item.heating.value], item.heating))
     amber.extend(Alert("amber", text) for text in suspicion_flags(item))
