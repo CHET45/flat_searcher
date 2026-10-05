@@ -187,16 +187,17 @@ def _on_the_way(
         ):
             if direct is None:
                 continue
-            best: tuple[int, Place] | None = None
+            best: tuple[tuple[int, bool, int], Place] | None = None
             for place in places.by_category.get(category, ()):
                 reach, onward = first.at(place.lat, place.lon), second.at(place.lat, place.lon)
                 if reach is None or onward is None:
                     continue
                 detour = reach.seconds + onward.seconds - direct.seconds
-                if detour <= allowed and (best is None or detour < best[0]):
-                    best = (detour, place)
+                rank = (max(0, round(detour / 60)), not place.name, detour)
+                if detour <= allowed and (best is None or rank < best[0]):
+                    best = (rank, place)
             if best is not None:
-                found[direction][category] = {**best[1].as_dict(), "plus_min": max(0, round(best[0] / 60))}
+                found[direction][category] = {**best[1].as_dict(), "plus_min": best[0][0]}
     if first_walk:
         path = decode_polyline(first_walk)
         beside = [

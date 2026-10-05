@@ -87,6 +87,12 @@ class SurroundingsTests(TestCase):
         self.assertEqual(way["back"]["grocery"]["name"], "On route")
         self.assertNotIn("diy", way["there"])
 
+    def test_at_an_equal_detour_a_named_shop_is_preferred(self) -> None:
+        places = Places({"pois": [["grocery", "", *ROAD[2]], ["grocery", "Rimi", ROAD[3][0], ROAD[3][1] - 0.0005]],
+                         "areas": []})
+        found = surroundings(FLAT, WALK, DRIVE, places, {"office": target_fields(DRIVE, *TARGET)}, {})
+        self.assertEqual(found["on_the_way"]["office"]["there"]["grocery"]["name"], "Rimi")
+
     def test_a_grocery_beside_the_walk_to_the_stop_is_on_the_way_on_foot(self) -> None:
         beside = encode_polyline([FLAT, (LAT + 0.0005, 24.104)])
         self.assertEqual(self._found(beside)["on_the_way"]["office"]["on_foot"]["grocery"]["name"], "Corner")
