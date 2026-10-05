@@ -78,8 +78,9 @@ global.localStorage = {
 global.matchMedia = () => ({ matches: false, addEventListener() {} });
 global.getComputedStyle = () => ({ getPropertyValue: () => "#123456" });
 global.scrollTo = () => {};
+global.innerWidth = 375;
 global.scrollBy = (x, y) => scrolled.push([x, y]);
-global.requestAnimationFrame = (callback) => setTimeout(callback, 0);
+global.requestAnimationFrame = (callback) => setTimeout(callback, 16);
 global.addEventListener = (type, listener) => (windowListeners[type] = windowListeners[type] || []).push(listener);
 
 const settle = () => new Promise((resolve) => setTimeout(resolve, 5));
@@ -95,7 +96,9 @@ const target = (action) => ({
   new Function(code)();
   await settle();
   for (const action of actions) {
-    if (action.layout) {
+    if (action.width) {
+      global.innerWidth = action.width;
+    } else if (action.layout) {
       Object.assign(layout, action.layout);
     } else if (action.event) {
       for (const listener of windowListeners[action.event] || []) listener({});

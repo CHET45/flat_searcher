@@ -708,6 +708,7 @@ details.how .chip { margin-right: 4px; }
   };
 
   let place = null;
+  let placeWidth = window.innerWidth;
   let turning = null;
   let noting = false;
   let settleTimer = null;
@@ -719,21 +720,25 @@ details.how .chip { margin-right: 4px; }
     }
     return null;
   };
-  window.addEventListener("scroll", () => {
-    if (turning || noting) return;
-    noting = true;
-    requestAnimationFrame(() => { noting = false; if (!turning) place = topCard(); });
-  }, { passive: true });
   const keepPlace = () => {
     if (!turning) turning = place || { id: null };
     clearTimeout(settleTimer);
     settleTimer = setTimeout(() => requestAnimationFrame(() => requestAnimationFrame(() => {
+      if (!turning) return;
       const element = turning.id && $("c-" + turning.id);
       if (element && !$("list-view").hidden) window.scrollBy(0, element.getBoundingClientRect().top - turning.top);
       turning = null;
       place = topCard();
+      placeWidth = window.innerWidth;
     })), 200);
   };
+  // A turning phone may clamp the scroll before it reports the resize: a scroll at a new width is the turn.
+  window.addEventListener("scroll", () => {
+    if (turning || noting) return;
+    if (window.innerWidth !== placeWidth) { keepPlace(); return; }
+    noting = true;
+    requestAnimationFrame(() => { noting = false; if (!turning) place = topCard(); });
+  }, { passive: true });
   window.addEventListener("orientationchange", keepPlace);
   window.addEventListener("resize", keepPlace);
 

@@ -353,6 +353,12 @@ class PageScriptTests(TestCase):
         self.assertEqual(self._run(self._flats(), turn)["scrolled"], [[0, -400]])
         resize_only = turn[:4] + [{"layout": landscape}, {"event": "resize"}, {"wait": 300}]
         self.assertEqual(self._run(self._flats(), resize_only)["scrolled"], [[0, -400]])
+        clamped_first = turn[:4] + [{"width": 812}, {"layout": landscape}, {"event": "scroll"}, {"wait": 20},
+                                    {"event": "resize"}, {"wait": 300}]
+        self.assertEqual(self._run(self._flats(), clamped_first)["scrolled"], [[0, -400]])
+        late_resize = turn[:4] + [{"layout": landscape}, {"event": "resize"}, {"wait": 205}, {"event": "resize"},
+                                  {"wait": 400}]
+        self.assertEqual(self._run(self._flats(), late_resize)["scrolled"], [[0, -400]])
         self.assertEqual(self._run(self._flats(), turn[:2] + turn[4:])["scrolled"], [])
 
     def test_sorting_by_price_reorders_the_cards(self) -> None:
