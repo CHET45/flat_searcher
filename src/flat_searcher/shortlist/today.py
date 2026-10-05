@@ -7,9 +7,9 @@ from dataclasses import dataclass
 
 from flat_searcher.shortlist.criteria import TodayRules
 from flat_searcher.shortlist.alerts import suspicion_flags
-from flat_searcher.shortlist.rank import Evaluation, nearest_minutes, total_expected_minutes, wear_group
+from flat_searcher.shortlist.rank import Evaluation, gym_minutes, nearest_minutes, total_expected_minutes, wear_group
 
-GROCERY_CAP_MIN = 30
+NEAR_CAP_MIN = 30
 
 
 @dataclass(frozen=True)
@@ -56,13 +56,19 @@ def _scores(
     ):
         return None
     grocery = nearest_minutes(item.surroundings, "walk", "grocery")
+    gym = gym_minutes(item.surroundings)
     return (
         float(price),
         minutes,
         -float(area),
         float(wear_group(item.building)),
-        float(min(grocery, GROCERY_CAP_MIN) if grocery is not None else GROCERY_CAP_MIN),
+        _capped(grocery),
+        _capped(gym),
     )
+
+
+def _capped(minutes: float | None) -> float:
+    return float(min(minutes, NEAR_CAP_MIN) if minutes is not None else NEAR_CAP_MIN)
 
 
 def _beats(a: tuple[float, ...], b: tuple[float, ...]) -> bool:

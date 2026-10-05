@@ -13,7 +13,7 @@ from flat_searcher.shortlist.alerts import AROUND_WORDS, alerts_for, distance_la
 from flat_searcher.shortlist.digest import Selection, band_label, section_label
 from flat_searcher.shortlist.facts import Fact
 from flat_searcher.shortlist.groups import group_ads
-from flat_searcher.shortlist.rank import Evaluation, expected_minutes
+from flat_searcher.shortlist.rank import Evaluation, expected_minutes, gym_minutes
 from flat_searcher.shortlist.today import pick_today
 
 TEMPLATE = "page.html"
@@ -182,6 +182,7 @@ def _card(
         "building": dict(item.building),
         "drive": dict((item.surroundings.get("drive") or {}).get("targets") or {}),
         "nearby": _nearby(item.surroundings),
+        "gymMin": gym_minutes(item.surroundings),
         "onTheWay": _on_the_way(item.surroundings),
         "around": {kind: {"name": near["name"], "m": near["m"]}
                    for kind, near in (item.surroundings.get("around") or {}).items()},
@@ -219,7 +220,11 @@ def _card_stops(cards: Sequence[Mapping[str, Any]]) -> set[str]:
 
 def _nearby(surroundings: Mapping[str, Any]) -> dict[str, Any]:
     nearby: dict[str, Any] = {}
-    for mode, keep in (("walk", ("name", "min")), ("drive", ("name", "min", "km"))):
+    for mode, keep in (
+        ("walk", ("name", "min")),
+        ("drive", ("name", "min", "km")),
+        ("transit", ("name", "min", "every_min", "transfers", "routes")),
+    ):
         found = surroundings.get(mode) or {}
         lists = {key: value for key, value in found.items() if key in CATEGORY_WORDS}
         if lists:
@@ -253,7 +258,7 @@ def _map_places(surroundings: Mapping[str, Any]) -> list[list[Any]]:
             seen.add(key)
             marks.append([*key, label])
 
-    for mode, how in (("walk", "on foot"), ("drive", "by car")):
+    for mode, how in (("walk", "on foot"), ("drive", "by car"), ("transit", "by transit")):
         for category, places in (surroundings.get(mode) or {}).items():
             for place in places if category in CATEGORY_WORDS else ():
                 mark(category, place, f"{CATEGORY_WORDS[category]} {how} {place['min']} min")

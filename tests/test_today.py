@@ -16,7 +16,7 @@ def _option(minutes: int, every: int = 10) -> dict:
 
 def _flat(ss_id: str, price: int = 35000, minutes: int = 25, area: float = 50, floor: int = 3,
           description: str = "", ratio: float = 1.0, campus: list | None = None, building: dict | None = None,
-          grocery: int | None = None):
+          grocery: int | None = None, gym: int | None = None, gym_ride: tuple[int, int] | None = None):
     record = {
         "ss_id": ss_id,
         "status": "active",
@@ -28,8 +28,12 @@ def _flat(ss_id: str, price: int = 35000, minutes: int = 25, area: float = 50, f
                            "campus": [_option(minutes)] if campus is None else campus}}
     if building is not None:
         transit["building"] = building
-    if grocery is not None:
-        transit["surroundings"] = {"walk": {"grocery": [{"name": "shop", "min": grocery}]}}
+    if grocery is not None or gym is not None or gym_ride is not None:
+        transit["surroundings"] = {
+            "walk": {"grocery": [] if grocery is None else [{"name": "shop", "min": grocery}],
+                     "gym": [] if gym is None else [{"name": "gym", "min": gym}]},
+            "transit": {"gym": [] if gym_ride is None else [{"name": "gym", "min": gym_ride[0], "every_min": gym_ride[1]}]},
+        }
     return evaluate(record, CRITERIA, transit)
 
 
@@ -92,3 +96,7 @@ class TodayTests(TestCase):
     def test_a_grocery_close_on_foot_beats_a_far_one_and_none_counts_as_far(self) -> None:
         flats = [_flat("far", grocery=25), _flat("near", grocery=4), _flat("none")]
         self.assertEqual(_picks(flats), [("near", 1), ("far", 2), ("none", 3)])
+
+    def test_a_gym_close_on_foot_or_by_transit_beats_a_far_one_and_none_counts_as_far(self) -> None:
+        flats = [_flat("far", gym=25), _flat("ride", gym=25, gym_ride=(5, 4)), _flat("none"), _flat("walk", gym=9)]
+        self.assertEqual(_picks(flats), [("ride", 1), ("walk", 2), ("far", 3), ("none", 4)])

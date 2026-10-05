@@ -23,7 +23,7 @@ from flat_searcher.shortlist.facts import (
 WEAR_GROUPS = ("V1", "V2", "V3", "V4", "V5")
 NEW_BUILD = "new build"
 UNKNOWN_WEAR = 3
-GATES = ("price", "rooms", "floor", "building_type", "stove", "share", "gym")
+GATES = ("price", "rooms", "floor", "building_type", "stove", "share")
 
 
 @dataclass(frozen=True)
@@ -44,6 +44,7 @@ class Evaluation:
     price_ratio: float | None = None
     building: Mapping[str, Any] = field(default_factory=dict)
     surroundings: Mapping[str, Any] = field(default_factory=dict)
+    far_from_gym: bool = False
 
     @property
     def reached(self) -> int:
@@ -70,9 +71,9 @@ def evaluate(
         "building_type": core.get("building_type") in criteria.excluded_types,
         "stove": criteria.exclude_stove and heating.value == "stove",
         "share": share.value == "yes",
-        "gym": _too_far_from_a_gym((transit or {}).get("surroundings"), criteria.gym_walk_max_min),
     }
     rejected = next((gate for gate in GATES if checks[gate]), None)
+    surroundings = dict((transit or {}).get("surroundings") or {})
     rooms_index = (
         criteria.room_order.index(rooms) if rooms in criteria.room_order else len(criteria.room_order)
     )
@@ -92,7 +93,8 @@ def evaluate(
         precision=(transit or {}).get("precision"),
         price_ratio=_price_ratio(record),
         building=dict((transit or {}).get("building") or {}),
-        surroundings=dict((transit or {}).get("surroundings") or {}),
+        surroundings=surroundings,
+        far_from_gym=_far_from_gym(surroundings, criteria.gym_max_min),
     )
 
 
@@ -103,6 +105,7 @@ def sort_key(evaluation: Evaluation) -> tuple[Any, ...]:
         evaluation.rooms_index,
         -LAYOUT_RANK[(evaluation.layout.value, evaluation.layout.source)],
         -evaluation.reached,
+        evaluation.far_from_gym,
         evaluation.price_ratio if evaluation.price_ratio is not None else math.inf,
         price,
         evaluation.ss_id,
@@ -114,11 +117,19 @@ def nearest_minutes(surroundings: Mapping[str, Any], mode: str, category: str) -
     return min((int(place["min"]) for place in found), default=None)
 
 
-def _too_far_from_a_gym(surroundings: Mapping[str, Any] | None, limit: int | None) -> bool:
-    if limit is None or not surroundings or "walk" not in surroundings:
+def gym_minutes(surroundings: Mapping[str, Any]) -> float | None:
+    """The nearest gym on foot or by transit, the average wait included."""
+    walk = nearest_minutes(surroundings, "walk", "gym")
+    rides = ((surroundings.get("transit") or {}).get("gym")) or []
+    ride = min((place["min"] + place["every_min"] / 2 for place in rides), default=None)
+    return min((minutes for minutes in (walk, ride) if minutes is not None), default=None)
+
+
+def _far_from_gym(surroundings: Mapping[str, Any], limit: int | None) -> bool:
+    if limit is None or "walk" not in surroundings:
         return False
-    nearest = nearest_minutes(surroundings, "walk", "gym")
-    return nearest is None or nearest > limit
+    minutes = gym_minutes(surroundings)
+    return minutes is None or minutes > limit
 
 
 def wear_group(building: Mapping[str, Any]) -> int:

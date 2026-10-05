@@ -6,8 +6,8 @@ It crawls every Riga apartment listing, keeps every field in a plain JSONL libra
 log, measures public-transport journeys from each flat to the places that matter on the real
 timetable, and turns the result into a ranked shortlist: a Markdown digest and a static,
 phone-friendly page with a map. Every rule-based criterion — price, rooms, floor, building type,
-layout, heating, hot water, replanning, land tenure, building wear, travel time, a gym and a
-grocery nearby — is decided in
+layout, heating, hot water, replanning, land tenure, building wear, travel time, the nearest gym
+and grocery — is decided in
 code, so each flat's position can be explained in words, and risks that can block a purchase or a
 mortgage are shown as alerts at the top of each card.
 A local language model is optional and only reads what rules cannot: floor plans, condition and
@@ -29,7 +29,7 @@ SS.com ──index──► library ──judge──► verdicts          local
 | --- | --- |
 | `index` | Crawls SS.com through one throttled client, parses every field of every listing, diffs against the library, logs changes, computes district €/m² medians, merges verdicts and queues listings worth judging. A listing is marked removed only after a complete crawl. |
 | `judge` | Judges the day's queue with a local Ollama model under a structured-output schema. Price comparisons are computed in code and override the model's answer. |
-| `transit` | Geocodes listings against the state address register (VZD), attaches the building's wear group, age and walls from the VZD cadastre, measures what is near on foot and by car from OpenStreetMap (groceries, gyms, DIY stores, malls, what lies on the way to each target, nuisances around), then runs RAPTOR over the Rīgas Satiksme GTFS timetable backwards from each target, with walks along the OpenStreetMap pedestrian graph. Each option is measured on the timetable: median door-to-door minutes and how often it runs. |
+| `transit` | Geocodes listings against the state address register (VZD), attaches the building's wear group, age and walls from the VZD cadastre, measures what is near on foot and by car from OpenStreetMap (groceries, gyms, DIY stores, malls, what lies on the way to each target, nuisances around) and the nearest gym by public transport, then runs RAPTOR over the Rīgas Satiksme GTFS timetable backwards from each target, with walks along the OpenStreetMap pedestrian graph. Each option is measured on the timetable: median door-to-door minutes and how often it runs. |
 | `digest` | Applies the gates and a transparent ordering (no score) from `criteria.toml`, merges duplicate ads of one flat, and writes `digest/<day>.md` and a static page in `digest/<day>/`. |
 | `publish` | Force-pushes the page to a GitHub Pages repository as a single commit. |
 

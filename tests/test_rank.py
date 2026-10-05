@@ -17,7 +17,7 @@ exclude_stove = true
 [floor]
 exclude = [1]
 [surroundings]
-gym_walk_max_min = 15
+gym_max_min = 15
 """
 )
 
@@ -49,6 +49,15 @@ def _record(
             "district_median_price_per_m2": 1000 if ratio is not None else "unknown",
         },
     }
+
+
+def _gyms(walk: int | None = None, ride: tuple[int, int] | None = None, reached: int = 1) -> dict:
+    transit = _transit(*"abc"[:reached])
+    transit["surroundings"] = {
+        "walk": {"gym": [] if walk is None else [{"name": "g", "min": walk}]},
+        "transit": {"gym": [] if ride is None else [{"name": "r", "min": ride[0], "every_min": ride[1]}]},
+    }
+    return transit
 
 
 def _journey(*routes: str, minutes: int = 20, every: int = 10) -> dict:
@@ -89,14 +98,10 @@ class GateTests(TestCase):
         self.assertRejected(_record("second", floor=2), None)
         self.assertRejected(_record("unknown", floor=None), None)
 
-    def test_a_located_flat_needs_a_gym_within_the_walk(self) -> None:
-        def gyms(*minutes: int) -> dict:
-            return {"precision": "exact", "targets": {},
-                    "surroundings": {"walk": {"gym": [{"name": "g", "min": m} for m in minutes]}}}
-        self.assertEqual(evaluate(_record("near"), CRITERIA, gyms(9, 20)).rejected, None)
-        self.assertEqual(evaluate(_record("far"), CRITERIA, gyms(16)).rejected, "gym")
-        self.assertEqual(evaluate(_record("none"), CRITERIA, gyms()).rejected, "gym")
-        self.assertEqual(evaluate(_record("unknown"), CRITERIA, {"precision": "exact", "targets": {}}).rejected, None)
+    def test_no_gym_nearby_is_not_a_rejection(self) -> None:
+        self.assertRejected(_record("far"), None)
+        self.assertEqual(evaluate(_record("far"), CRITERIA, _gyms(walk=40)).rejected, None)
+        self.assertEqual(evaluate(_record("none"), CRITERIA, _gyms()).rejected, None)
 
     def test_first_failing_gate_is_the_reason(self) -> None:
         self.assertRejected(_record("x", price=90000, rooms=4, building_type="Koka"), "price")
@@ -138,6 +143,24 @@ class OrderTests(TestCase):
         self.assertEqual(
             _order((_record("one"), _transit("a")), (_record("three"), _transit("a", "b", "c"))),
             ["three", "one"],
+        )
+
+    def test_a_flat_without_a_gym_within_reach_on_foot_or_by_transit_sorts_after_the_others(self) -> None:
+        self.assertEqual(
+            _order(
+                (_record("a-far"), _gyms(walk=16, ride=(12, 10))),
+                (_record("b-none"), _gyms()),
+                (_record("c-near"), _gyms(walk=15)),
+                (_record("d-ride"), _gyms(ride=(10, 8))),
+                (_record("e-unknown"), _transit("a")),
+            ),
+            ["c-near", "d-ride", "e-unknown", "a-far", "b-none"],
+        )
+
+    def test_targets_reached_count_before_the_gym(self) -> None:
+        self.assertEqual(
+            _order((_record("near"), _gyms(walk=5)), (_record("reached"), _gyms(reached=3))),
+            ["reached", "near"],
         )
 
     def test_cheaper_relative_to_the_district_sorts_first_and_unknown_last(self) -> None:

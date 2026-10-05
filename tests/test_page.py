@@ -198,6 +198,24 @@ class RenderPageTests(TestCase):
         ])
         self.assertEqual(_cards(_page([_record("b")]))["b"]["nearby"], {})
 
+    def test_the_gym_by_transit_and_by_car_reaches_the_card_with_its_expected_minutes(self) -> None:
+        lemon = {"name": "Lemon Gym", "lat": 56.95, "lon": 24.15}
+        surroundings = {
+            "walk": {"grocery": [], "gym": [{"name": "Far", "lat": 56.9, "lon": 24.2, "min": 25, "m": 2100}], "mall": []},
+            "drive": {"targets": {}, "gym": [{"name": "Gym!", "lat": 56.93, "lon": 24.1, "min": 4, "km": 2.2}]},
+            "transit": {"gym": [{**lemon, "min": 12, "every_min": 8, "transfers": 1, "walk_m": 600,
+                                 "routes": [["bus 3"], ["tram 1", "tram 6"]]}]},
+        }
+        page = _page([_record("a")], [{**_located("a"), "surroundings": surroundings}])
+        card = _cards(page)["a"]
+        self.assertEqual(card["nearby"]["transit"], {"gym": [
+            {"name": "Lemon Gym", "min": 12, "every_min": 8, "transfers": 1, "routes": [["bus 3"], ["tram 1", "tram 6"]]},
+        ]})
+        self.assertEqual(card["nearby"]["drive"], {"gym": [{"name": "Gym!", "min": 4, "km": 2.2}]})
+        self.assertEqual(card["gymMin"], 16)
+        self.assertIn(["gym", "Lemon Gym", 56.95, 24.15, "gym by transit 12 min"], _map(page)["places"]["a"])
+        self.assertIsNone(_cards(_page([_record("b")]))["b"]["gymMin"])
+
     def test_the_card_shows_the_option_with_the_shortest_expected_time(self) -> None:
         page = _page([_record("a")], [_located("a", office=[RARE, SLOW, JOURNEY])])
         self.assertEqual(_cards(page)["a"]["best"]["office"]["minutes"], 24)
@@ -412,6 +430,30 @@ class PageScriptTests(TestCase):
         self.assertLess(shown["list"].index("Around: cemetery"), folded)
         self.assertLess(folded, shown["list"].index("By car: DIY Depo"))
         self.assertLess(folded, shown["list"].index("On the way to office"))
+
+    def test_the_card_has_a_gym_line_and_the_gym_sort_counts_transit(self) -> None:
+        def gyms(walk: int | None, ride: int | None) -> dict:
+            near = {"walk": {"grocery": [{"name": "Rimi", "lat": 56.92, "lon": 24.12, "min": 3, "m": 250}],
+                             "gym": [] if walk is None else [{"name": "MyFitness", "lat": 56.9, "lon": 24.2,
+                                                              "min": walk, "m": walk * 83}], "mall": []},
+                    "drive": {"targets": {}, "gym": [{"name": "MyFitness", "lat": 56.9, "lon": 24.2, "min": 5, "km": 2.4}]},
+                    "transit": {"gym": [] if ride is None else [{"name": "Lemon Gym", "lat": 56.95, "lon": 24.15,
+                                                                 "min": ride, "every_min": 8, "transfers": 1, "walk_m": 600,
+                                                                 "routes": [["bus 3"], ["tram 1", "tram 6"]]}]},
+                    "around": {}}
+            return near
+
+        listings = [_record("walk", price=30000), _record("ride", price=38000, house="2"),
+                    _record("none", price=36000, house="3")]
+        transit = [{**_located("walk"), "surroundings": gyms(14, 11)},
+                   {**_located("ride"), "surroundings": gyms(None, 6)},
+                   {**_located("none"), "surroundings": gyms(None, None)}]
+        shown = self._run(_page(listings, transit), [{"click": "view-all"}, {"change": "f-sort", "value": "gym"}])
+        self.assertEqual(shown["cards"], ["ride", "walk", "none"])
+        self.assertEqual(shown["list"].count("On foot: grocery Rimi <b>3 min</b></p>"), 3)
+        self.assertIn("Gym: MyFitness on foot <b>14 min</b> · MyFitness by car <b>5 min</b> · 2.4 km", shown["list"])
+        self.assertIn("Gym: none within 30 min on foot · Lemon Gym by bus 3 → tram 1 <b>6 min</b>, every 8"
+                      " · MyFitness by car <b>5 min</b> · 2.4 km", shown["list"])
 
     def test_sorting_by_price_reorders_the_cards(self) -> None:
         shown = self._run(self._flats(), [{"click": "view-all"}, {"change": "f-sort", "value": "area"}])

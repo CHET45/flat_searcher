@@ -196,7 +196,7 @@ exclude_stove = true
 exclude = [1]                  # floors that never pass; default: none
 
 [surroundings]
-gym_walk_max_min = 15           # a gym within this walk is required; default: no gate
+gym_max_min = 15               # no gym this close on foot or by transit sorts a flat lower; default: off
 
 [transit]
 walk_m = 500                   # stops this close to the flat and to a target count
@@ -245,9 +245,11 @@ roundabouts, free-flow speeds per road class capped at 0.8 × `maxspeed`, chains
 gives places (`riga-places.json`, thirty days): groceries (no fuel-station shops or kiosks),
 gyms (no outdoor workout spots), DIY stores, malls, and areas — industrial (≥ 2 ha), works,
 landfill, sewage plant, cemetery, bog (no reed beds), railway yard. Per listing: the nearest
-groceries, gyms and mall on foot (up to 30 min), the nearest groceries, DIY stores and malls by
-car, the car time and distance to and from each target (≈, no traffic), what lies on the way by
-car (detour ≤ 3 min for groceries and malls, ≤ 5 min for DIY, there and back) and on foot (a
+groceries, gyms and mall on foot (up to 30 min), the nearest groceries, DIY stores, malls and
+gym by car, the nearest gym by public transport (one more backward RAPTOR target made of every
+gym: each stop near a gym leads on foot to the closest one, so the first gym reached wins; same
+window), the car time and distance to and from each target (≈, no traffic), what lies on the
+way by car (detour ≤ 3 min for groceries and malls, ≤ 5 min for DIY, there and back) and on foot (a
 grocery within 100 m of the walk to the first stop of the best option), and the straight-line
 distance to the nearest area of each kind (0 inside). `transit` prints `surroundings=N`; a
 failed download leaves them out.
@@ -274,8 +276,7 @@ transfer; that count still orders the digest.
 **Gates**, in order: price above `max_eur`, rooms outside `order` (unknown rooms pass), a floor
 listed in `[floor] exclude`, an excluded building type, stove heating as the only heating the
 text names, a sale as a share of property ("pārdod kā domājamā daļa"; the ordinary land share
-of a flat does not count), no gym within `gym_walk_max_min` on foot (flats without surroundings
-pass).
+of a flat does not count). A gym is not a gate: a flat far from one only sorts lower.
 
 **Facts read from the text** (regular expressions over the title, description and fields, each
 with the sentence it came from): heating source — city/central, the house's own boiler room,
@@ -288,8 +289,9 @@ are the seller's words, not a check of any register.
 
 **Ordering**, no score: price band (list order) → rooms (list order, unknown last) → layout
 (isolated from the text › isolated by series prior › unknown › walk-through by series ›
-walk-through from the text) → number of targets reached directly → €/m² relative to the
-district median → price. Every column of that key is shown in the digest row.
+walk-through from the text) → number of targets reached directly → a gym within `gym_max_min`
+(on foot, or by transit counting half the headway; flats without surroundings count as near) →
+€/m² relative to the district median → price. Every column of that key is shown in the digest row.
 
 **Digest marks**: ★ first seen after the previous digest, ↓ price dropped after the previous
 digest. Removed candidates are counted in the header. **Alerts**, red: stove heating, a replanning the seller calls not legalised, land leased (a lease
@@ -312,7 +314,8 @@ without either) and `photos/<ss_id>.jpg` (thumbnails, `.t.jpg`, ~5 KB, cached un
   target and no implausible-price or room-size alert; among them the flats no other beats at once
   on price, the summed expected journey time, floor area, building wear (V1–V5; a new build
   not yet in the cadastre counts as V1, an unknown house as V3) and the walk to the nearest
-  grocery (capped at 30 min), then flats beaten only by those,
+  grocery and to the nearest gym on foot or by transit (each capped at 30 min), then flats
+  beaten only by those,
   up to `size`. **All** shows every candidate in the digest's order.
 - A card shows, per target, the option with the shortest expected time (minutes + every/2) on
   one line: route chips, minutes, every N, changes, walk. Alerts come first, under the address.
@@ -320,8 +323,9 @@ without either) and `photos/<ss_id>.jpg` (thumbnails, `.t.jpg`, ~5 KB, cached un
   when a verdict exists, a heating and hot-water line, a building line (year, floors, wear and
   its survey year), and under "What the listing says" the sentences behind every fact plus
   SS.com's own values (price, area, rooms, floor, series, type, street). Each target line
-  adds the car time there and back; "On foot", "By car", "On the way to …" and "Around" lines
-  follow. Sorts include the nearest grocery and the nearest gym on foot. The focus view marks only
+  adds the car time there and back; "On foot", "Gym" (on foot, by transit with its routes and
+  headway, by car), "By car", "On the way to …" and "Around" lines follow. Sorts include the
+  nearest grocery on foot and the nearest gym on foot or by transit. The focus view marks only
   the nearest objects of each kind and the nearest point of each nearby area.
 - A page whose data is older than a day says so at the top. Turning the phone keeps the card
   that was at the top of the screen in place.

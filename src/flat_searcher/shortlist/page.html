@@ -328,7 +328,7 @@ details.how .chip { margin-right: 4px; }
         <option value="every">Most frequent</option>
         <option value="walk">Least walking</option>
         <option value="grocery">Nearest grocery on foot</option>
-        <option value="gym">Nearest gym on foot</option>
+        <option value="gym">Nearest gym on foot or by transit</option>
         <option value="price">Cheapest</option>
         <option value="ratio">Cheapest €/m² vs district</option>
         <option value="area">Largest</option>
@@ -493,7 +493,7 @@ details.how .chip { margin-right: 4px; }
     ratio: ["cheapest €/m² vs district", (card) => card.ratio == null ? null : [card.ratio]],
     area: ["largest", (card) => card.area == null ? null : [-card.area]],
     grocery: ["nearest grocery on foot", (card) => nearestOnFoot(card, "grocery")],
-    gym: ["nearest gym on foot", (card) => nearestOnFoot(card, "gym")],
+    gym: ["nearest gym on foot or by transit", (card) => card.gymMin == null ? null : [card.gymMin]],
   };
   const sortKey = (card) => JOURNEY_SORTS[state.sort]
     ? (card.sort[state.sort] && card.sort[state.sort][state.to]) || null
@@ -595,15 +595,29 @@ details.how .chip { margin-right: 4px; }
     wastewater: "sewage plant", railway: "railway yard" };
   const distanceText = (metres) => metres < 1000 ? metres + " m" : (metres / 1000).toFixed(1) + " km";
   const placeText = (category, place) => CATEGORY[category] + (place.name ? " " + esc(place.name) : "");
+  const firstOf = (mode, nearby) => ((nearby[mode] || {}).gym || [])[0];
+  const gymParts = (nearby) => {
+    const walk = firstOf("walk", nearby), ride = firstOf("transit", nearby), car = firstOf("drive", nearby);
+    const rideFaster = ride && (!walk || ride.min + ride.every_min / 2 < walk.min);
+    return [
+      walk ? esc(walk.name) + " on foot <b>" + walk.min + " min</b>" : "none within 30 min on foot",
+      rideFaster ? esc(ride.name) + " by " + ride.routes.map((routes) => esc(routes[0])).join(" → ") +
+        " <b>" + ride.min + " min</b>, every " + ride.every_min : "",
+      car ? esc(car.name) + " by car <b>" + car.min + " min</b> · " + car.km + " km" : "",
+    ].filter(Boolean);
+  };
   const surroundingsHtml = (card) => {
     const lines = [];
     const folded = [];
     const nearest = (mode, categories, how) => categories
       .map((category) => [category, ((card.nearby[mode] || {})[category] || [])[0]])
       .filter(([, place]) => place).map(([category, place]) => placeText(category, place) + " <b>" + place.min + " min</b>" + how(place));
-    const onFoot = nearest("walk", ["grocery", "gym", "mall"], () => "");
+    const onFoot = nearest("walk", ["grocery", "mall"], () => "");
     const byCar = nearest("drive", ["diy", "mall"], (place) => " · " + place.km + " km");
-    if (card.nearby.walk) lines.push("On foot: " + (onFoot.length ? onFoot.join(" · ") : "no grocery, gym or mall within 30 min"));
+    if (card.nearby.walk) {
+      lines.push("On foot: " + (onFoot.length ? onFoot.join(" · ") : "no grocery or mall within 30 min"));
+      lines.push("Gym: " + gymParts(card.nearby).join(" · "));
+    }
     if (byCar.length) folded.push("By car: " + byCar.join(" · "));
     for (const [target, way] of Object.entries(card.onTheWay)) {
       const parts = (way.onFoot ? ["grocery " + esc(way.onFoot) + " on foot to the stop"] : [])
