@@ -35,6 +35,9 @@ class FakeSources:
     def register(self) -> list[tuple[str, float, float]]:
         return [("Mājas iela 1", *point(*FLAT)), ("Darba iela 9", *point(*TARGET_ONE))]
 
+    def buildings(self) -> dict:
+        return {}
+
     def streets(self) -> dict:
         return reduce_streets({"elements": []})
 

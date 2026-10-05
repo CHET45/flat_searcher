@@ -337,7 +337,7 @@ def _run_transit(config: AppConfig, args: argparse.Namespace) -> int:
     print(
         f"transit: exact={result.exact} approx={result.approx} unlocated={result.unlocated} "
         f"targets={result.targets} unresolved_targets={result.unresolved_targets} "
-        f"reached_any={result.reached_any}"
+        f"reached_any={result.reached_any} buildings={result.buildings}"
     )
     return 0
 

@@ -6,14 +6,18 @@ import csv
 import io
 import json
 import os
+import re
+import shutil
 import urllib.request
+import zipfile
 from collections.abc import Callable
 from datetime import datetime, timedelta
 from pathlib import Path
 from typing import IO, Any
 from urllib.parse import quote
 
-from flat_searcher.transit.addresses import parse_register_rows
+from flat_searcher.transit.addresses import RegisterEntry, parse_register_rows
+from flat_searcher.transit.buildings import Building, parse_buildings
 from flat_searcher.transit.osm import OVERPASS_QUERY, Streets, reduce_streets, reduce_walk_graph
 
 GTFS_PACKAGE_URL = (
@@ -24,6 +28,11 @@ REGISTER_URL = (
     "https://data.gov.lv/dati/dataset/6b06a7e8-dedf-4705-a47b-2a7c51177473/resource/"
     "a510737a-18ce-400f-ad4b-04fce5228272/download/aw_eka.csv"
 )
+CADASTRE_PACKAGE_URL = (
+    "https://data.gov.lv/dati/api/3/action/package_show?id=be841486-4af9-4d38-aa14-6502a2ddb517"
+)
+BUILDINGS_RESOURCE = "building.zip"
+RIGA_BUILDINGS_FILE = re.compile(r"(?:^|/)0001000_[^/]*/[^/]+\.xml$", re.IGNORECASE)
 OVERPASS_ENDPOINTS = (
     "https://overpass-api.de/api/interpreter",
     "https://overpass.kumi.systems/api/interpreter",
@@ -34,7 +43,8 @@ STREETS_MAX_AGE = timedelta(days=90)
 USER_AGENT = "flat-searcher (+https://github.com/CHET45/flat_searcher)"
 
 GTFS_CACHE = "rs-gtfs.zip"
-REGISTER_CACHE = "riga-addresses.json"
+REGISTER_CACHE = "riga-register.json"
+BUILDINGS_CACHE = "riga-buildings.json"
 STREETS_CACHE = "riga-streets.json"
 WALK_CACHE = "riga-walk.json"
 
@@ -82,7 +92,7 @@ class TransitSources:
                 _write_atomic(path, response.read())
         return path.read_bytes()
 
-    def register(self) -> list[tuple[str, float, float]]:
+    def register(self) -> list[RegisterEntry]:
         path = self._cache_dir / REGISTER_CACHE
         if not self._fresh(path):
             with self._open(REGISTER_URL) as response:
@@ -90,9 +100,46 @@ class TransitSources:
                 buildings = parse_register_rows(csv.DictReader(text))
             _write_atomic(path, json.dumps(buildings, ensure_ascii=False).encode("utf-8"))
         return [
-            (str(address), float(lat), float(lon))
-            for address, lat, lon in json.loads(path.read_text(encoding="utf-8"))
+            RegisterEntry(str(address), float(lat), float(lon), code, bool(planned))
+            for address, lat, lon, code, planned in json.loads(path.read_text(encoding="utf-8"))
         ]
+
+    def buildings(self) -> dict[str, Building]:
+        path = self._cache_dir / BUILDINGS_CACHE
+        if not self._fresh(path):
+            try:
+                self._download_buildings(path)
+            except Exception:
+                if not path.exists():
+                    raise
+        return json.loads(path.read_text(encoding="utf-8"))
+
+    def _download_buildings(self, path: Path) -> None:
+        with self._open(CADASTRE_PACKAGE_URL) as response:
+            package = json.load(response)
+        urls = [
+            str(resource.get("url", ""))
+            for resource in package.get("result", {}).get("resources", [])
+            if str(resource.get("url", "")).rsplit("/", 1)[-1] == BUILDINGS_RESOURCE
+        ]
+        if not urls:
+            raise TransitSourceError("the cadastre dataset lists no building archive")
+        archive_path = path.with_name(f".{BUILDINGS_RESOURCE}.{os.getpid()}.tmp")
+        path.parent.mkdir(parents=True, exist_ok=True)
+        try:
+            with self._open(urls[0]) as response, archive_path.open("wb") as archive_file:
+                shutil.copyfileobj(response, archive_file, 1 << 20)
+            with zipfile.ZipFile(archive_path) as archive:
+                names = [name for name in archive.namelist() if RIGA_BUILDINGS_FILE.search(name)]
+                if len(names) != 1:
+                    raise TransitSourceError("the building archive has no single Riga file")
+                with archive.open(names[0]) as stream:
+                    buildings = parse_buildings(stream)
+        finally:
+            archive_path.unlink(missing_ok=True)
+        if not buildings:
+            raise TransitSourceError("the Riga building file lists no apartment building")
+        _write_atomic(path, json.dumps(buildings, ensure_ascii=False).encode("utf-8"))
 
     def streets(self) -> Streets:
         self._openstreetmap()

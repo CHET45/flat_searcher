@@ -1,6 +1,6 @@
 from unittest import TestCase
 
-from flat_searcher.transit.addresses import AddressIndex, parse_register_rows
+from flat_searcher.transit.addresses import AddressIndex, RegisterEntry, parse_register_rows
 
 REGISTER = [
     ("Aleksandra Čaka iela 20", 56.9601, 24.1301),
@@ -25,15 +25,25 @@ REGISTER = [
 
 
 class ParseRegisterRowsTests(TestCase):
-    def test_keeps_existing_riga_buildings_with_wgs84_coordinates(self) -> None:
+    def test_keeps_existing_riga_buildings_with_wgs84_coordinates_code_and_planned_flag(self) -> None:
         rows = [
-            {"STATUSS": "EKS", "STD": "Skolas iela 1, Rīga, LV-1010", "DD_N": "56.95", "DD_E": "24.11"},
-            {"STATUSS": "DEL", "STD": "Skolas iela 3, Rīga, LV-1010", "DD_N": "56.95", "DD_E": "24.11"},
-            {"STATUSS": "EKS", "STD": "Skolas iela 1, Jūrmala, LV-2015", "DD_N": "56.9", "DD_E": "23.7"},
-            {"STATUSS": "EKS", "STD": "\"Riņņi\", Vecates pag., LV-4211", "DD_N": "57.7", "DD_E": "25.1"},
-            {"STATUSS": "EKS", "STD": "Skolas iela 5, Rīga, LV-1010", "DD_N": "", "DD_E": ""},
+            {"KODS": "101", "STATUSS": "EKS", "FOR_BUILD": "N", "STD": "Skolas iela 1, Rīga, LV-1010",
+             "DD_N": "56.95", "DD_E": "24.11"},
+            {"KODS": "102", "STATUSS": "DEL", "FOR_BUILD": "N", "STD": "Skolas iela 3, Rīga, LV-1010",
+             "DD_N": "56.95", "DD_E": "24.11"},
+            {"KODS": "103", "STATUSS": "EKS", "FOR_BUILD": "N", "STD": "Skolas iela 1, Jūrmala, LV-2015",
+             "DD_N": "56.9", "DD_E": "23.7"},
+            {"KODS": "104", "STATUSS": "EKS", "FOR_BUILD": "N", "STD": "\"Riņņi\", Vecates pag., LV-4211",
+             "DD_N": "57.7", "DD_E": "25.1"},
+            {"KODS": "105", "STATUSS": "EKS", "FOR_BUILD": "N", "STD": "Skolas iela 5, Rīga, LV-1010",
+             "DD_N": "", "DD_E": ""},
+            {"KODS": "106", "STATUSS": "EKS", "FOR_BUILD": "Y", "STD": "Skolas iela 7, Rīga, LV-1010",
+             "DD_N": "56.96", "DD_E": "24.12"},
         ]
-        self.assertEqual(parse_register_rows(rows), [("Skolas iela 1", 56.95, 24.11)])
+        self.assertEqual(
+            parse_register_rows(rows),
+            [("Skolas iela 1", 56.95, 24.11, "101", False), ("Skolas iela 7", 56.96, 24.12, "106", True)],
+        )
 
 
 class LocateTests(TestCase):
@@ -98,6 +108,24 @@ class LocateTests(TestCase):
 
     def test_two_equally_good_streets_are_ambiguous(self) -> None:
         self.assertIsNone(self.index.locate("J. Daliņa", "5"))
+
+    def test_the_located_building_carries_its_register_code_and_planned_flag(self) -> None:
+        index = AddressIndex(
+            [
+                RegisterEntry("Skolas iela 1", 56.95, 24.11, "101", False),
+                RegisterEntry("Skolas iela 7", 56.96, 24.12, "106", True),
+            ]
+        )
+        exact = index.locate("Skolas", "7")
+        approx = index.locate("Skolas", "2")
+        assert exact is not None and approx is not None
+        self.assertEqual((exact.precision, exact.address_code, exact.planned), ("exact", "106", True))
+        self.assertEqual((approx.precision, approx.address_code, approx.planned), ("approx", "101", False))
+
+    def test_an_entry_without_a_code_locates_as_before(self) -> None:
+        location = self.index.locate("Čaka", "20")
+        assert location is not None
+        self.assertEqual((location.address_code, location.planned), (None, False))
 
     def test_free_text_address_of_a_target(self) -> None:
         location = self.index.locate_text("Anniņmuižas bulvāris 26a, Rīga")

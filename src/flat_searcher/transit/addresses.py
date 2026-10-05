@@ -7,6 +7,7 @@ import unicodedata
 from collections import defaultdict
 from collections.abc import Iterable, Mapping
 from dataclasses import dataclass
+from typing import NamedTuple
 
 EXACT = "exact"
 APPROX = "approx"
@@ -43,12 +44,22 @@ _DANGLING_BLOCK = re.compile(r"^(.+?)\s+(\d+[a-z]?)\s*[kк]$", re.IGNORECASE)
 StreetKey = tuple[tuple[str, ...], str | None]
 
 
+class RegisterEntry(NamedTuple):
+    address: str
+    lat: float
+    lon: float
+    code: str | None = None
+    planned: bool = False
+
+
 @dataclass(frozen=True)
 class Location:
     lat: float
     lon: float
     precision: str
     matched: str
+    address_code: str | None = None
+    planned: bool = False
 
 
 @dataclass(frozen=True)
@@ -57,10 +68,15 @@ class _Building:
     lat: float
     lon: float
     address: str
+    code: str | None
+    planned: bool
+
+    def location(self, precision: str) -> Location:
+        return Location(self.lat, self.lon, precision, self.address, self.code, self.planned)
 
 
-def parse_register_rows(rows: Iterable[Mapping[str, str]]) -> list[tuple[str, float, float]]:
-    buildings: list[tuple[str, float, float]] = []
+def parse_register_rows(rows: Iterable[Mapping[str, str]]) -> list[RegisterEntry]:
+    buildings: list[RegisterEntry] = []
     for row in rows:
         if row.get("STATUSS") != "EKS":
             continue
@@ -68,17 +84,23 @@ def parse_register_rows(rows: Iterable[Mapping[str, str]]) -> list[tuple[str, fl
         if len(parts) < 2 or parts[1] != "Rīga":
             continue
         try:
-            buildings.append((parts[0], float(row["DD_N"]), float(row["DD_E"])))
+            lat, lon = float(row["DD_N"]), float(row["DD_E"])
         except (KeyError, ValueError):
             continue
+        buildings.append(
+            RegisterEntry(parts[0], lat, lon, row.get("KODS") or None, row.get("FOR_BUILD") == "Y")
+        )
     return buildings
 
 
 class AddressIndex:
-    def __init__(self, entries: Iterable[tuple[str, float, float]]) -> None:
+    def __init__(self, entries: Iterable[RegisterEntry | tuple[str, float, float]]) -> None:
         self._streets: dict[StreetKey, list[_Building]] = defaultdict(list)
         self._by_last_word: dict[str, set[StreetKey]] = defaultdict(set)
-        for address, lat, lon in entries:
+        for entry in entries:
+            address, lat, lon, code, planned = (
+                entry if isinstance(entry, RegisterEntry) else RegisterEntry(*entry)
+            )
             match = _REGISTER_ADDRESS.match(address)
             if not match:
                 continue
@@ -88,7 +110,9 @@ class AddressIndex:
             if not core:
                 continue
             key = (core, kind)
-            self._streets[key].append(_Building(_house_key(match.group(2)), lat, lon, address))
+            self._streets[key].append(
+                _Building(_house_key(match.group(2)), lat, lon, address, code, planned)
+            )
             self._by_last_word[core[-1]].add(key)
 
     def locate_text(self, text: str) -> Location | None:
@@ -129,8 +153,7 @@ class AddressIndex:
             for pool in pools:
                 hits = {key: found for key in pool if (found := self._find_house(key, wanted))}
                 if len(hits) == 1:
-                    building = next(iter(hits.values()))
-                    return Location(building.lat, building.lon, EXACT, building.address)
+                    return next(iter(hits.values())).location(EXACT)
                 if len(hits) > 1:
                     return None
         if len(pools[0]) != 1:
@@ -170,7 +193,7 @@ class AddressIndex:
         else:
             target = int(number.group())
             chosen = min(buildings, key=lambda building: abs(_number(building.house) - target))
-        return Location(chosen.lat, chosen.lon, APPROX, chosen.address)
+        return chosen.location(APPROX)
 
 
 def _fold(text: str) -> str:

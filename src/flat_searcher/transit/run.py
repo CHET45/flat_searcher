@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import logging
 from dataclasses import dataclass
 from datetime import datetime
 from collections.abc import Mapping
@@ -9,18 +10,26 @@ from typing import Any, Protocol
 
 from flat_searcher.library import ACTIVE, LibraryStore
 from flat_searcher.shortlist.criteria import Criteria, target_definition
-from flat_searcher.transit.addresses import APPROX, EXACT, AddressIndex
+from flat_searcher.transit.addresses import APPROX, EXACT, AddressIndex, Location, RegisterEntry
 from flat_searcher.transit.geometry import encode_polyline
 from flat_searcher.transit.gtfs import TransitFeed
 from flat_searcher.transit.journeys import Planner, Target
 from flat_searcher.transit.osm import Streets
 from flat_searcher.transit.walking import WalkGraph
 
+NEW_BUILD = "new build"
+
+logger = logging.getLogger(__name__)
+
+Buildings = Mapping[str, Mapping[str, Any]]
+
 
 class Sources(Protocol):
     def gtfs_zip(self) -> bytes: ...
 
-    def register(self) -> list[tuple[str, float, float]]: ...
+    def register(self) -> list[RegisterEntry]: ...
+
+    def buildings(self) -> Buildings: ...
 
     def streets(self) -> Streets: ...
 
@@ -35,6 +44,7 @@ class TransitResult:
     targets: int
     unresolved_targets: int
     reached_any: int
+    buildings: int
 
 
 class TransitRun:
@@ -79,9 +89,10 @@ class TransitRun:
             )
             targets = {name: planner.target(lat, lon) for name, (lat, lon) in points.items()}
 
+        buildings = self._buildings()
         computed_at = self._now.isoformat(timespec="seconds")
         counts = {EXACT: 0, APPROX: 0}
-        unlocated = reached_any = 0
+        unlocated = reached_any = with_building = 0
         entries: list[dict[str, Any]] = []
         shapes_used: set[str] = set()
         stops_used: set[str] = set()
@@ -111,20 +122,23 @@ class TransitRun:
                 journeys = options_at[point]
             if any(journeys.values()):
                 reached_any += 1
-            entries.append(
-                {
-                    "ss_id": ss_id,
-                    "precision": location.precision,
-                    "matched": location.matched,
-                    "lat": location.lat,
-                    "lon": location.lon,
-                    "targets": journeys,
-                    "feed": feed.label if feed else None,
-                    "day": feed.day.isoformat() if feed else None,
-                    "window": "-".join(self._criteria.window) if self._criteria else None,
-                    "computed_at": computed_at,
-                }
-            )
+            entry: dict[str, Any] = {
+                "ss_id": ss_id,
+                "precision": location.precision,
+                "matched": location.matched,
+                "lat": location.lat,
+                "lon": location.lon,
+                "targets": journeys,
+                "feed": feed.label if feed else None,
+                "day": feed.day.isoformat() if feed else None,
+                "window": "-".join(self._criteria.window) if self._criteria else None,
+                "computed_at": computed_at,
+            }
+            building = _building(location, buildings)
+            if building is not None:
+                entry["building"] = building
+                with_building += 1
+            entries.append(entry)
         self._store.write_transit(entries)
         self._store.write_transit_targets(
             {
@@ -154,4 +168,21 @@ class TransitRun:
             targets=len(points),
             unresolved_targets=unresolved,
             reached_any=reached_any,
+            buildings=with_building,
         )
+
+    def _buildings(self) -> Buildings | None:
+        try:
+            return self._sources.buildings()
+        except Exception as error:
+            logger.warning("building register unavailable: %s", type(error).__name__)
+            return None
+
+
+def _building(location: Location, buildings: Buildings | None) -> Mapping[str, Any] | None:
+    if buildings is None or location.precision != EXACT:
+        return None
+    found = buildings.get(location.address_code) if location.address_code else None
+    if found is None and location.planned:
+        return {"note": NEW_BUILD}
+    return found
