@@ -15,6 +15,7 @@ from flat_searcher.shortlist.facts import (
     land_fact,
     layout_fact,
     sells_share,
+    stove_fact,
 )
 
 GATES = ("price", "rooms", "floor", "building_type", "stove", "share")
@@ -30,6 +31,7 @@ class Evaluation:
     layout: Fact
     heating: Fact
     land: Fact = Fact("unknown", "none")
+    stove: Fact = Fact("none", "none")
     journeys: dict[str, list[dict[str, Any]]] = field(default_factory=dict)
     precision: str | None = None
     price_ratio: float | None = None
@@ -73,6 +75,7 @@ def evaluate(
         layout=layout_fact(record),
         heating=heating,
         land=land_fact(record),
+        stove=stove_fact(record),
         journeys=dict((transit or {}).get("targets") or {}),
         precision=(transit or {}).get("precision"),
         price_ratio=_price_ratio(record),

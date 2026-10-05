@@ -54,16 +54,64 @@ _STOVE_HEATING = re.compile(
     r"|\bдровян\w*\s+отоплени\w*"
     r"|\bотоплени\w*\s*[-–:]?\s*(?:печн\w*|печ(?:ь|ью|ами)\b|(?:на\s+)?дров\w*)"
 )
-_OTHER_HEATING = re.compile(
-    r"\bcentrāl\w*\s+apkur\w*|\bapkur\w*\s*[-–:]?\s*centrāl\w*"
-    r"|\bgāzes\s+(?:apkur|katl)\w*|\belektrisk\w*\s+apkur\w*|\bsiltumsūkn\w*"
-    r"|\bцентральн\w*\s+отоплени\w*|\bотоплени\w*\s*[-–:]?\s*центральн\w*"
-    r"|\bгазов\w*\s+(?:отоплени|котл)\w*|\bэлектрическ\w*\s+отоплени\w*"
-    r"|\bтеплов\w*\s+насос\w*"
+_STOVE_HEATING_MORE = re.compile(
+    r"\bпеч\w*\s+для\s+отоплени\w*"
+    r"|\bдровян\w*\s+печ\w*[^.;]{0,40}отоплени\w*|\bотоплени\w*[^.;]{0,60}\bдровян\w*\s+печ\w*"
+    r"|\bstove\s+heating|\bheated\s+(?:by|with)\s+(?:a\s+)?(?:wood\s+)?stove"
+    r"|\bwood(?:-burning)?\s+stove[^.;]{0,50}\bheating|\bheating\b[^.;]{0,60}\bwood(?:-burning)?\s+stove"
+    r"|\bheating\b[^.;]{0,30}\bfirewood|\bheating\b[^.;]{0,40}\b(?:by|with)\s+(?:a\s+)?stoves?\b"
 )
+_STOVE_INSTALLABLE = re.compile(
+    r"(?:possibility|option|iespēj\w*|можно|возможн\w*)\s+(?:to\s+)?(?:install|uzstādīt|ierīkot|установить|поставить)"
+    r"\s+(?:\S+\s+){0,2}$"
+)
+_HEATING_SOURCES: dict[str, re.Pattern[str]] = {
+    "house_boiler": re.compile(
+        r"\b(?:centrāl|centralizēt)\w*\s+gāzes\s+apkur\w*"
+        r"|\b(?:mājas|ēkas|savs?|sava|savu)\s+katlu\s*māj\w*"
+        r"|\bpagrabā[^.;]{0,30}\bkatl\w*|\bkatl\w*[^.;]{0,40}\bmājas\s+(?:pirmajā\s+stāvā|pagrabā)"
+        r"|\b(?:собственн|сво|домов)\w*\s+котельн\w*"
+        r"|\bcommunal\s+(?:gas\s+)?boilers?|\bboiler\s+room\s+in\s+the\s+building"
+    ),
+    "own_boiler": re.compile(
+        r"\b(?:autonom|individuāl)\w*\s+(?:gāzes\s+)?apkur\w*\b(?!\s+(?:siltuma\s+)?(?:skaitīt|uzskait|patēriņ))"
+        r"|\b(?:автономн|индивидуальн)\w*\s+(?:газов\w*\s+)?отоплени\w*"
+        r"|\bgāzes\s+apkur\w*|\bгазов\w*\s+отоплени\w*"
+        r"|\b(?:individual|autonomous|own)\s+(?:gas\s+)?heating\b(?!\s+(?:meters?|metering|costs?))"
+        r"|\bgas\s+heating"
+    ),
+    "heat_pump": re.compile(r"\bsiltumsūkn\w*|\bтеплов\w*\s+насос\w*|\bтеплонасос\w*|\bheat\s+pumps?\b"),
+    "electric": re.compile(
+        r"\belektrisk\w*\s+(?:apkur|radiator|sildītāj|konvektor)\w*|\belektroradiator\w*"
+        r"|\bэлектрическ\w*\s+(?:отоплени|радиатор|конвектор|батаре)\w*|\bэлектро(?:батаре|конвектор)\w*"
+        r"|\belectric\s+(?:heating|radiators?|heaters?|convectors?)"
+    ),
+    "district": re.compile(
+        r"\b(?:centrāl|centralizēt)\w*\s+(?:pilsētas\s+)?apkur\w*|\bpilsētas\s+(?:centrālā\s+)?apkur\w*"
+        r"|\bapkur\w*\s*[-–:]?\s*(?:centrāl|centralizēt)\w*|\brīgas\s+siltum\w*"
+        r"|\bцентральн\w*\s+(?:городск\w*\s+)?отоплени\w*|\bгородск\w*\s+отоплени\w*"
+        r"|\bотоплени\w*\s*[-–:]?\s*центральн\w*|\bцентральн\w*\s+теплоснабжени\w*"
+        r"|\bcentral(?:ised|ized)?\s+heating|\bdistrict\s+heating|\bcity\s+heating"
+    ),
+}
+_HEATING_BOILER = re.compile(
+    r"\b(?:gāzes|granulu|cietā\s+kurināmā|apkures|elektro)\s*(?:apkures\s+)?katl\w*"
+    r"|\bгазов\w*\s+котл\w*|\bкотл\w*\s+(?:на\s+газ\w*|отоплени\w*)|\bgas\s+boilers?"
+)
+HEATING_ORDER = ("house_boiler", "own_boiler", "heat_pump", "electric", "district")
+_HEAT_WORD = re.compile(r"\bapkur\w*|\bapsild\w*|\bотоплени\w*|\bотаплива\w*|\bheating\b")
+_HOT_WATER_WORD = re.compile(r"\bkarst\w*\s+ūden\w*|\bsilt\w*\s+ūden\w*|\bгоряч\w*\s+вод\w*|\bhot\s+water")
+_RELATIVE = re.compile(r"\s*,\s*(?:kas|kurš|kura|kuru|который|которая|которое|that|which)\b")
+_MODAL = re.compile(
+    r"\b(?:iespēj\w*|var|varēs|можно|возможн\w*|options?|possibility|potential)\b[^.;]{0,25}?"
+    r"\b(?:likt|uzlikt|uzstādīt|ierīkot|izbūvēt|veidot|pieslēgt|install\w*|установ\w*|постав\w*|подключ\w*)"
+    r"|\b(?:could|can|may)\s+(?:also\s+)?be\s+(?:installed|added|connected)"
+    r"|\buzstādīšan\w*|\bдля\s+установки|\bfor\s+(?:the\s+)?installation|\bpotenciāl\w*"
+)
+_CLAUSES = re.compile(r"[^.;!?\n]+[.;!?]?")
 _STOVE_OBJECT = re.compile(
     r"(?<!mikroviļņu )(?<!mikroviļnu )(?<!микроволновая )(?<!духовая )"
-    r"\b(?:krāsn\w*|печь|печка|печи)\b"
+    r"\b(?:krāsn\w*|печь|печка|печи)\b|\bwood(?:-burning)?\s+stove"
 )
 _REMOVED = re.compile(r"demontē\w*|\bbijusi\b|\bбыло\b|\bбыла\b|демонтир\w*")
 
@@ -121,17 +169,75 @@ def layout_fact(record: Mapping[str, Any]) -> Fact:
 
 
 def heating_fact(record: Mapping[str, Any]) -> Fact:
-    text = _text(record)
-    other = _evidence(_OTHER_HEATING, text)
-    stove = _evidence(_STOVE_HEATING, text, skip=_REMOVED)
-    if other:
-        return Fact("other", "text", other)
+    """The heating system; a specific source beats the word "central", and "stove" only when nothing else is named."""
+    clauses = _clauses(_text(record))
+    found: dict[str, list[str]] = {kind: [] for kind in HEATING_ORDER}
+    for clause in clauses:
+        kind = _heating_kind(clause)
+        if kind:
+            found[kind].append(clause)
+    kind = next((kind for kind in HEATING_ORDER if found[kind]), None)
+    if kind:
+        return Fact(kind, "text", tuple(dict.fromkeys(map(_quote, found[kind])))[:2])
+    stove = [clause for clause in clauses if _stove_heating(clause)]
     if stove:
-        return Fact("stove", "text", stove)
-    mention = _evidence(_STOVE_OBJECT, text)
-    if mention:
-        return Fact("mention", "text", mention)
+        return Fact("stove", "text", tuple(dict.fromkeys(map(_quote, stove)))[:2])
     return Fact("unknown", "none")
+
+
+def stove_fact(record: Mapping[str, Any]) -> Fact:
+    """Stove heating even beside another system; otherwise whether a stove is there at all."""
+    text = _text(record)
+    stove = [clause for clause in _clauses(text) if _stove_heating(clause)]
+    if stove:
+        return Fact("heating", "text", tuple(dict.fromkeys(map(_quote, stove)))[:2])
+    present = _evidence(_STOVE_OBJECT, text)
+    return Fact("present", "text", present) if present else Fact("none", "none")
+
+
+def _stove_heating(clause: str) -> bool:
+    if _REMOVED.search(clause):
+        return False
+    return any(
+        not _STOVE_INSTALLABLE.search(clause[: match.start()])
+        for pattern in (_STOVE_HEATING, _STOVE_HEATING_MORE)
+        for match in pattern.finditer(clause)
+    )
+
+
+def _heating_kind(clause: str) -> str | None:
+    if _MODAL.search(clause):
+        return None
+    for kind in HEATING_ORDER:
+        if _HEATING_SOURCES[kind].search(clause):
+            return kind
+        if kind == "own_boiler" and any(
+            not _for_hot_water_only(clause, boiler) for boiler in _HEATING_BOILER.finditer(clause)
+        ):
+            return kind
+    return None
+
+
+def _for_hot_water_only(clause: str, match: re.Match[str]) -> bool:
+    before = clause[: match.start()].rsplit(",", 1)[-1][-50:]
+    after = clause[match.end() : match.end() + 60]
+    relative = _RELATIVE.match(after)
+    if relative:
+        after = after[: relative.end()] + after[relative.end() :].split(",", 1)[0]
+    else:
+        after = after.split(",", 1)[0]
+    near = before + match.group() + after
+    return bool(_HOT_WATER_WORD.search(near)) and not _HEAT_WORD.search(near)
+
+
+def _clauses(text: str) -> list[str]:
+    return [clause.strip() for clause in _CLAUSES.findall(text) if clause.strip()]
+
+
+def _quote(clause: str) -> str:
+    if len(clause) <= MAX_EVIDENCE_CHARS:
+        return clause
+    return clause[: MAX_EVIDENCE_CHARS - 1].rstrip() + "…"
 
 
 def sells_share(record: Mapping[str, Any]) -> Fact:

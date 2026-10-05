@@ -6,6 +6,7 @@ from flat_searcher.shortlist.facts import (
     land_fact,
     layout_fact,
     sells_share,
+    stove_fact,
 )
 
 
@@ -101,20 +102,115 @@ class HeatingFactTests(TestCase):
         self.assertHeating("Санузел совмещенный, отопление печное.", "stove")
         self.assertHeating("Печное отопление, центральная канализация.", "stove")
 
-    def test_another_heating_system_wins_over_a_stove(self) -> None:
-        self.assertHeating("Krāsns apkure vai centrālā apkure pēc izvēles.", "other")
-        self.assertHeating("Individuālā gāzes apkure.", "other")
+    def test_another_system_named_beside_a_stove_is_the_heating_system(self) -> None:
+        self.assertHeating("Krāsns apkure vai centrālā apkure pēc izvēles.", "district")
+        self.assertHeating("Отапливаться можно теплонасосом либо дровами - печное отопление.", "heat_pump")
+        self.assertHeating("Для отопления предусмотрены как электрические радиаторы, так и дровяная печь.", "electric")
+        self.assertHeating("Pārdošanā studio tipa dzīvoklis koka mājā ar malkas apkuri.", "stove")
+        self.assertHeating("Есть дровяная печь для отопления.", "stove")
+
+    def test_district_heating(self) -> None:
+        self.assertHeating("Mājā ir centrālā apkure.", "district")
+        self.assertHeating("Centrālā apkure ir individuāli regulējama, ļaujot kontrolēt izmaksas.", "district")
+        self.assertHeating("Ēkā ir centrālā apkure ar individuālu siltuma patēriņa uzskaiti.", "district")
+        self.assertHeating("+ Centralizēta pilsētas apkure, centralizēts aukstais ūdens.", "district")
+        self.assertHeating("Siltumu piegādā Rīgas siltums.", "district")
+        self.assertHeating("Квартира оборудована центральным городским отоплением.", "district")
+        self.assertHeating("Дом подключён к системе центрального теплоснабжения Риги.", "district")
+        self.assertHeating("Радиаторы с термостатами, городское отопление.", "district")
+
+    def test_the_house_boiler_room_is_not_district_heating(self) -> None:
+        self.assertHeating("Mājā ir nodrošināta centrālā gāzes apkure un centralizēta ūdensapgāde.", "house_boiler")
+        self.assertHeating("Centralizēta gāzes apkure (ēkai pagrabā ir savs ekonomisks gāzes katls).", "house_boiler")
+        self.assertHeating("Heating is provided by two communal gas boilers in the building.", "house_boiler")
+        self.assertHeating(
+            "Dzīvokļu apsilde ar gāzes vai cietās kurināmās vielas katlu (atrodas mājas pirmajā stāvā).",
+            "house_boiler",
+        )
+
+    def test_own_boiler_and_autonomous_heating(self) -> None:
+        self.assertHeating("Dzīvoklī ir uzstādīta autonoma gāzes apkure.", "own_boiler")
+        self.assertHeating("Individuāla gāzes apkure, zemi komunālie maksājumi.", "own_boiler")
+        self.assertHeating("Индивидуальное газовое отопление позволяет регулировать микроклимат.", "own_boiler")
+        self.assertHeating("Veikti remontdarbi: - jauns gāzes katls - siltas grīdas.", "own_boiler")
+        self.assertHeating("Heating is provided by an individual gas boiler.", "own_boiler")
+        self.assertHeating("Gāzes katls apkurei un karstajam ūdenim, legāli izbūvēts.", "own_boiler")
+        self.assertHeating("Dzīvoklī ir uzstādīts boileris un apkures katls.", "own_boiler")
+        self.assertHeating(
+            "Aprīkots ar boileri karstajam ūdenim, granulu katlu, kurš ir regulējams attālināti.", "own_boiler"
+        )
+        self.assertHeating("Автономное газовое отопление; горячая вода обеспечивается газовым котлом.", "own_boiler")
+
+    def test_heat_pump_and_electric_heating(self) -> None:
+        self.assertHeating("Apkure - siltumsūknis.", "heat_pump")
+        self.assertHeating("Uzstādīts siltumsūknis guļamistabā (vasarā strādā kā kondicionieris).", "heat_pump")
+        self.assertHeating("Отопление от современных электробатарей, которые программируются с телефона.", "electric")
+        self.assertHeating("Electric radiators are used for heating in winter.", "electric")
+
+    def test_a_specific_source_beats_the_word_central(self) -> None:
+        self.assertHeating("Centrālā apkure. Dzīvoklim ir sava autonoma gāzes apkure.", "own_boiler")
+
+    def test_words_that_only_look_like_a_heating_source(self) -> None:
+        self.assertHeating("Dzīvoklī ir individuālie apkures siltuma skaitītāji.", "unknown")
+        self.assertHeating("Each apartment has an individual heating meter.", "unknown")
+        self.assertHeating("Individual heating meters are provided for each apartment.", "unknown")
+        self.assertHeating("Taču pastāv visas iespējas likt siltumsūkni vai granulu katlu.", "unknown")
+        self.assertHeating("City gas available, with the option to install gas heating.", "unknown")
+        self.assertHeating(
+            "Heating is currently provided by a stove, though electric radiators or a heat pump could be installed.",
+            "stove",
+        )
+        self.assertHeating("Pašlaik ir krāsns apkure, kurai papildus var uzlikt elektriskos radiatorus.", "stove")
+        self.assertHeating(
+            "Autonomas apkures iespēja: sagatavoti izvadi granulu katla uzstādīšanai (pašlaik krāsns apkure).",
+            "stove",
+        )
+        self.assertHeating("Elektriskā apsildāmā grīda sanitārajā mezglā.", "unknown")
+        self.assertHeating("Apkure, apsaimniekošana ziemā ap 180 euro.", "unknown")
+
+    def test_a_boiler_named_for_hot_water_does_not_heat(self) -> None:
+        self.assertHeating(
+            "Dzīvoklī ir gāzes katls, kas nodrošina karstā ūdens uzsildi, ir centrālā pilsētas apkure.", "district"
+        )
+        self.assertHeating("Karstā ūdens uzsilde ar individuālo gāzes katlu.", "unknown")
+        self.assertHeating("Karstais ūdens tiek uzsildīts ar gāzes katlu.", "unknown")
+
+    def test_evidence_quotes_the_clause_that_names_the_system(self) -> None:
+        fact = heating_fact(_flat("Ir centrālā apkure. Virtuvē arī krāsns apkure."))
+        self.assertEqual((fact.value, fact.evidence), ("district", ("ir centrālā apkure.",)))
+
+    def test_a_stove_without_stove_heating_leaves_the_heating_unknown(self) -> None:
+        self.assertHeating("Saglabājusies podiņu krāsns un augsti griesti.", "unknown")
+
+
+class StoveFactTests(TestCase):
+    def assertStove(self, description: str, value: str) -> None:
+        fact = stove_fact(_flat(description))
+        self.assertEqual(fact.value, value, description)
+        self.assertEqual(bool(fact.evidence), value != "none", description)
+
+    def test_stove_heating_alone_or_beside_another_system(self) -> None:
+        self.assertStove("Krāsns apkure, vieta vienam auto.", "heating")
+        self.assertStove("Krāsns apkure vai centrālā apkure pēc izvēles.", "heating")
+        self.assertStove("Отапливаться можно теплонасосом либо дровами - печное отопление.", "heating")
+        self.assertStove("Для отопления предусмотрены как электрические радиаторы, так и дровяная печь.", "heating")
+        self.assertStove("Heating is provided by both electric radiators and a wood-burning stove.", "heating")
+        self.assertStove("-Apkurei var uzstādīt siltumsūkni, šobrīd krāsns apkure;", "heating")
 
     def test_kitchen_appliances_are_not_stoves(self) -> None:
-        self.assertHeating("Cepeškrāsns, plīts virsma, mikroviļņu krāsns.", "unknown")
-        self.assertHeating("Микроволновая печь и духовка.", "unknown")
+        self.assertStove("Cepeškrāsns, plīts virsma, mikroviļņu krāsns.", "none")
+        self.assertStove("Микроволновая печь и духовка.", "none")
 
-    def test_a_stove_object_is_only_a_mention(self) -> None:
-        self.assertHeating("Saglabājusies podiņu krāsns un augsti griesti.", "mention")
-        self.assertHeating("Guļamistabā ir arī čuguna krāsniņa.", "mention")
+    def test_a_stove_object_is_present_not_heating(self) -> None:
+        self.assertStove("Saglabājusies podiņu krāsns un augsti griesti.", "present")
+        self.assertStove("Guļamistabā ir arī čuguna krāsniņa.", "present")
+        self.assertStove("Historical details have been preserved, including a wood-burning stove.", "present")
 
     def test_a_removed_stove_is_not_stove_heating(self) -> None:
-        self.assertHeating("Bez apkures. Ir bijusi krāsns apkure, kas ir demontēta.", "mention")
+        self.assertStove("Bez apkures. Ir bijusi krāsns apkure, kas ir demontēta.", "present")
+
+    def test_a_stove_that_could_be_installed_is_not_stove_heating(self) -> None:
+        self.assertStove("Electric radiators, chimney flue – possibility to install a wood-burning stove.", "present")
 
 
 class ShareFactTests(TestCase):

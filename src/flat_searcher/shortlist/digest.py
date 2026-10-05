@@ -212,7 +212,7 @@ def journey_label(option: Mapping[str, Any]) -> str:
 
 def row_flags(item: Evaluation) -> list[str]:
     flags = []
-    if item.heating.value == "mention":
+    if item.stove.value == "present":
         flags.append("stove?")
     if item.land.value == "leased":
         flags.append(LAND_LEASED)
