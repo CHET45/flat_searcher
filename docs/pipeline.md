@@ -195,6 +195,9 @@ exclude_stove = true
 [floor]
 exclude = [1]                  # floors that never pass; default: none
 
+[surroundings]
+gym_walk_max_min = 15           # a gym within this walk is required; default: no gate
+
 [transit]
 walk_m = 500                   # stops this close to the flat and to a target count
 transfer_walk_m = 300          # default; longest walk between two stops at a transfer
@@ -235,6 +238,20 @@ SS.com addresses are matched against the register: first names dropped by
 SS.com, abbreviated street types, block numbers (`k-1`) and `59/61` numbers are handled. A
 missing house number falls back to the nearest number on the same street (`approx`, shown as ≈).
 
+**Surroundings** (listings that pass the price and rooms gates only): the same Overpass download
+gives a car graph (`riga-drive.json`, ninety days): roads cars may use, one-way streets,
+roundabouts, free-flow speeds per road class capped at 0.8 × `maxspeed`, chains contracted to
+~66k nodes; points snap to the largest strongly connected part within 400 m. A second query
+gives places (`riga-places.json`, thirty days): groceries (no fuel-station shops or kiosks),
+gyms (no outdoor workout spots), DIY stores, malls, and areas — industrial (≥ 2 ha), works,
+landfill, sewage plant, cemetery, bog (no reed beds), railway yard. Per listing: the nearest
+groceries, gyms and mall on foot (up to 30 min), the nearest groceries, DIY stores and malls by
+car, the car time and distance to and from each target (≈, no traffic), what lies on the way by
+car (detour ≤ 3 min for groceries and malls, ≤ 5 min for DIY, there and back) and on foot (a
+grocery within 100 m of the walk to the first stop of the best option), and the straight-line
+distance to the nearest area of each kind (0 inside). `transit` prints `surroundings=N`; a
+failed download leaves them out.
+
 **Walking** follows OpenStreetMap: every `highway` way except motorways, trunks and the
 like, and nothing marked `foot=no` or private without foot access, forms a graph cached as
 `riga-walk.json` from the same download as the streets. A walk snaps its ends to the nearest
@@ -257,7 +274,8 @@ transfer; that count still orders the digest.
 **Gates**, in order: price above `max_eur`, rooms outside `order` (unknown rooms pass), a floor
 listed in `[floor] exclude`, an excluded building type, stove heating as the only heating the
 text names, a sale as a share of property ("pārdod kā domājamā daļa"; the ordinary land share
-of a flat does not count).
+of a flat does not count), no gym within `gym_walk_max_min` on foot (flats without surroundings
+pass).
 
 **Facts read from the text** (regular expressions over the title, description and fields, each
 with the sentence it came from): heating source — city/central, the house's own boiler room,
@@ -276,7 +294,9 @@ district median → price. Every column of that key is shown in the digest row.
 **Digest marks**: ★ first seen after the previous digest, ↓ price dropped after the previous
 digest. Removed candidates are counted in the header. **Alerts**, red: stove heating, a replanning the seller calls not legalised, land leased (a lease
 that is not negated, land not or only partly owned, a denationalised house), building wear V4 or
-V5, the model's mortgage risk high or critical; amber: a stove in the flat, a replanning without
+V5, the model's mortgage risk high or critical; amber: an industrial zone or works within 150 m,
+a cemetery within 100 m, a bog within 500 m, a landfill within 2 km, a sewage plant within 1.5 km,
+a stove in the flat, a replanning without
 a stated status, heating from an own boiler or the house's boiler room, price below 0.4× the
 district's €/m², under 20 m². The digest has a wear column (group and survey year).
 
@@ -290,15 +310,19 @@ without either) and `photos/<ss_id>.jpg` (thumbnails, `.t.jpg`, ~5 KB, cached un
   share a card that lists the other ads and their prices.
 - **Today** (the default view): candidates that pass the soft rules of `[today]`, a way to every
   target and no implausible-price or room-size alert; among them the flats no other beats at once
-  on price, the summed expected journey time, floor area and building wear (V1–V5; a new build
-  not yet in the cadastre counts as V1, an unknown house as V3), then flats beaten only by those,
+  on price, the summed expected journey time, floor area, building wear (V1–V5; a new build
+  not yet in the cadastre counts as V1, an unknown house as V3) and the walk to the nearest
+  grocery (capped at 30 min), then flats beaten only by those,
   up to `size`. **All** shows every candidate in the digest's order.
 - A card shows, per target, the option with the shortest expected time (minutes + every/2) on
   one line: route chips, minutes, every N, changes, walk. Alerts come first, under the address.
   The card adds price history, company or private ad, land owned, the local model's condition
   when a verdict exists, a heating and hot-water line, a building line (year, floors, wear and
   its survey year), and under "What the listing says" the sentences behind every fact plus
-  SS.com's own values (price, area, rooms, floor, series, type, street).
+  SS.com's own values (price, area, rooms, floor, series, type, street). Each target line
+  adds the car time there and back; "On foot", "By car", "On the way to …" and "Around" lines
+  follow. Sorts include the nearest grocery and the nearest gym on foot. The focus view marks only
+  the nearest objects of each kind and the nearest point of each nearby area.
 - A page whose data is older than a day says so at the top. Turning the phone keeps the card
   that was at the top of the screen in place.
 - ★ favourite, ✕ hide and "opened" (set on opening the ad or its map) are stored in the
