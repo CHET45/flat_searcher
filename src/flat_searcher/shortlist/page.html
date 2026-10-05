@@ -597,25 +597,29 @@ details.how .chip { margin-right: 4px; }
   const placeText = (category, place) => CATEGORY[category] + (place.name ? " " + esc(place.name) : "");
   const surroundingsHtml = (card) => {
     const lines = [];
+    const folded = [];
     const nearest = (mode, categories, how) => categories
       .map((category) => [category, ((card.nearby[mode] || {})[category] || [])[0]])
       .filter(([, place]) => place).map(([category, place]) => placeText(category, place) + " <b>" + place.min + " min</b>" + how(place));
     const onFoot = nearest("walk", ["grocery", "gym", "mall"], () => "");
     const byCar = nearest("drive", ["diy", "mall"], (place) => " · " + place.km + " km");
     if (card.nearby.walk) lines.push("On foot: " + (onFoot.length ? onFoot.join(" · ") : "no grocery, gym or mall within 30 min"));
-    if (byCar.length) lines.push("By car: " + byCar.join(" · "));
+    if (byCar.length) folded.push("By car: " + byCar.join(" · "));
     for (const [target, way] of Object.entries(card.onTheWay)) {
       const parts = (way.onFoot ? ["grocery " + esc(way.onFoot) + " on foot to the stop"] : [])
         .concat(Object.entries(way.there).map(([category, place]) => placeText(category, place) + " +" + place.plus_min + " min by car"));
       const back = Object.entries(way.back).map(([category, place]) => placeText(category, place) + " +" + place.plus_min + " min");
       if (parts.length || back.length) {
-        lines.push("On the way to " + esc(target) + ": " + (parts.length ? parts.join(" · ") : "—") +
+        folded.push("On the way to " + esc(target) + ": " + (parts.length ? parts.join(" · ") : "—") +
           (back.length ? "; back: " + back.join(" · ") : ""));
       }
     }
     const around = Object.entries(card.around).map(([kind, near]) => (AROUND[kind] || kind) + " " + distanceText(near.m));
     if (around.length) lines.push("Around: " + around.join(" · "));
-    return lines.map((line) => '<p class="utility">' + line + "</p>").join("");
+    return lines.map((line) => '<p class="utility">' + line + "</p>").join("") + (folded.length
+      ? '<details class="why"><summary>Shops by car and on the way</summary>' +
+        folded.map((line) => '<p class="source">' + line + "</p>").join("") + "</details>"
+      : "");
   };
   const WEAR = { V1: "very good", V2: "good", V3: "satisfactory", V4: "unsatisfactory", V5: "critical" };
   const buildingHtml = (building) => {

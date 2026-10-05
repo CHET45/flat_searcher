@@ -408,6 +408,10 @@ class PageScriptTests(TestCase):
         self.assertIn("By car: DIY Depo <b>7 min</b> · 3.1 km", shown["list"])
         self.assertIn("On the way to office: grocery Rimi on foot to the stop · DIY Depo +2 min by car", shown["list"])
         self.assertIn("Around: cemetery 420 m", shown["list"])
+        folded = shown["list"].index('<details class="why"><summary>Shops by car and on the way</summary>')
+        self.assertLess(shown["list"].index("Around: cemetery"), folded)
+        self.assertLess(folded, shown["list"].index("By car: DIY Depo"))
+        self.assertLess(folded, shown["list"].index("On the way to office"))
 
     def test_sorting_by_price_reorders_the_cards(self) -> None:
         shown = self._run(self._flats(), [{"click": "view-all"}, {"change": "f-sort", "value": "area"}])

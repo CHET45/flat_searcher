@@ -299,7 +299,8 @@ class ReducePlacesTests(TestCase):
                 _node(4, {"leisure": "fitness_centre", "name": "MyFitness"}, 56.97, 24.1),
                 _node(5, {"leisure": "sports_centre", "sport": "swimming;fitness"}, 56.98, 24.1),
                 _node(6, {"shop": "doityourself", "brand": "Depo"}, 56.99, 24.1),
-                _node(7, {"shop": "trade", "name": "Kurši"}, 56.91, 24.1),
+                _node(7, {"shop": "doityourself", "name": "Kurši"}, 56.91, 24.1),
+                _node(10, {"shop": "trade", "name": "Aqualat"}, 56.915, 24.1),
                 mall,
                 _node(9, {"shop": "bakery", "name": "Lāči"}, 56.92, 24.1),
             ]

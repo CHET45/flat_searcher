@@ -53,7 +53,7 @@ ONEWAY_FORWARD = frozenset({"yes", "true", "1"})
 ROUNDABOUTS = frozenset({"roundabout", "circular"})
 IMPLIED_ONEWAY = frozenset({"motorway", "motorway_link"})
 GROCERY_SHOPS = frozenset({"supermarket", "convenience", "grocery"})
-DIY_SHOPS = frozenset({"doityourself", "trade"})
+DIY_SHOPS = frozenset({"doityourself"})
 FUEL_AND_KIOSK_BRANDS = frozenset(
     {"circle k", "neste", "virši", "viada", "gotika", "narvesen", "plus punkts"}
 )
@@ -72,7 +72,7 @@ INDUSTRIAL_MIN_HA = 2
 AREA_TOLERANCE_M = 10
 PLACES_QUERY = (
     "[out:json][timeout:300];("
-    f'nwr["shop"~"^(supermarket|convenience|grocery|doityourself|trade|mall)$"]{RIGA_BBOX};'
+    f'nwr["shop"~"^(supermarket|convenience|grocery|doityourself|mall)$"]{RIGA_BBOX};'
     f'nwr["leisure"="fitness_centre"]{RIGA_BBOX};'
     f'nwr["leisure"="sports_centre"]["sport"~"fitness"]{RIGA_BBOX};'
     f'nwr["landuse"~"^(industrial|landfill|cemetery|railway)$"]{RIGA_BBOX};'
