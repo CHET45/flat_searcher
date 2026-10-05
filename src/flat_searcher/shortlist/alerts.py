@@ -15,14 +15,16 @@ WEAR_ALERTS = {
     "V4": "building wear V4, unsatisfactory: check with the bank",
     "V5": "building wear V5, critical",
 }
-NUISANCE_ALERTS = {
-    "industrial": ("industrial zone", 150),
-    "works": ("factory", 150),
-    "cemetery": ("cemetery", 100),
-    "bog": ("bog", 500),
-    "landfill": ("landfill", 2000),
-    "wastewater": ("sewage plant", 1500),
+AROUND_WORDS = {
+    "industrial": "industrial zone",
+    "works": "factory",
+    "cemetery": "cemetery",
+    "bog": "bog",
+    "landfill": "landfill",
+    "wastewater": "sewage plant",
+    "railway": "railway yard",
 }
+NUISANCE_ALERT_M = {"industrial": 150, "works": 150, "cemetery": 100, "bog": 500, "landfill": 2000, "wastewater": 1500}
 HEATING_ALERTS = {
     "own_boiler": "heating: own boiler",
     "house_boiler": "heating: the house's own boiler room",
@@ -60,8 +62,8 @@ def alerts_for(item: Evaluation) -> list[Alert]:
     if item.heating.value in HEATING_ALERTS:
         amber.append(_alert("amber", HEATING_ALERTS[item.heating.value], item.heating))
     for kind, near in (item.surroundings.get("around") or {}).items():
-        if kind in NUISANCE_ALERTS and near["m"] <= NUISANCE_ALERTS[kind][1]:
-            amber.append(Alert("amber", f"{NUISANCE_ALERTS[kind][0]} {distance_label(near['m'])}"))
+        if kind in NUISANCE_ALERT_M and near["m"] <= NUISANCE_ALERT_M[kind]:
+            amber.append(Alert("amber", f"{AROUND_WORDS[kind]} {distance_label(near['m'])}"))
     amber.extend(Alert("amber", text) for text in suspicion_flags(item))
     return red + amber
 

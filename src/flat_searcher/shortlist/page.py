@@ -9,7 +9,7 @@ from importlib import resources
 from typing import Any
 
 from flat_searcher.shortlist.criteria import Criteria, TodayRules
-from flat_searcher.shortlist.alerts import alerts_for
+from flat_searcher.shortlist.alerts import AROUND_WORDS, alerts_for, distance_label
 from flat_searcher.shortlist.digest import Selection, band_label, section_label
 from flat_searcher.shortlist.facts import Fact
 from flat_searcher.shortlist.groups import group_ads
@@ -23,6 +23,7 @@ MAP_GLOBAL = "flatMapData"
 PHOTO_DIR = "photos"
 SORT_METRICS = {"time": "expected", "transfers": "transfers", "every": "every_min", "walk": "walk_m"}
 ALL_TARGETS = "*"
+CATEGORY_WORDS = {"grocery": "grocery", "gym": "gym", "mall": "mall", "diy": "DIY"}
 SOURCE_FIELDS = ("Cena", "Platība", "Istabas", "Stāvs", "Sērija", "Mājas tips", "Iela")
 
 
@@ -50,6 +51,7 @@ def render_page(
     }
     cards: list[dict[str, Any]] = []
     journeys: dict[str, dict[str, list[dict[str, Any]]]] = {}
+    places: dict[str, list[list[Any]]] = {}
     photo_ids: list[str] = []
     for group in groups:
         card = _card(group, criteria, selection, names, today)
@@ -59,6 +61,9 @@ def render_page(
             photo_ids.append(photo)
         if card["best"]:
             journeys[card["id"]] = {name: list(group[0].journeys.get(name) or []) for name in names}
+        marks = _map_places(group[0].surroundings)
+        if marks:
+            places[card["id"]] = marks
         cards.append(card)
     stops = transit_map.get("stops") or {}
     data = {
@@ -81,6 +86,7 @@ def render_page(
     }
     map_data = {
         "journeys": journeys,
+        "places": places,
         "shapes": transit_map.get("shapes") or {},
         "stops": stops,
         "streets": transit_map.get("streets") or {},
@@ -174,6 +180,11 @@ def _card(
         "replanning": _fact(item.replanning),
         "source": {key: fields[key] for key in SOURCE_FIELDS if fields.get(key)},
         "building": dict(item.building),
+        "drive": dict((item.surroundings.get("drive") or {}).get("targets") or {}),
+        "nearby": _nearby(item.surroundings),
+        "onTheWay": _on_the_way(item.surroundings),
+        "around": {kind: {"name": near["name"], "m": near["m"]}
+                   for kind, near in (item.surroundings.get("around") or {}).items()},
         "today": today.get(item.ss_id),
         "photo": None,
     }
@@ -204,6 +215,58 @@ def _card_stops(cards: Sequence[Mapping[str, Any]]) -> set[str]:
         for leg in option["legs"]
         for stop in (leg["board"], leg["alight"])
     }
+
+
+def _nearby(surroundings: Mapping[str, Any]) -> dict[str, Any]:
+    nearby: dict[str, Any] = {}
+    for mode, keep in (("walk", ("name", "min")), ("drive", ("name", "min", "km"))):
+        found = surroundings.get(mode) or {}
+        lists = {key: value for key, value in found.items() if key in CATEGORY_WORDS}
+        if lists:
+            nearby[mode] = {key: [{field: place[field] for field in keep} for place in places]
+                            for key, places in lists.items()}
+    return nearby
+
+
+def _on_the_way(surroundings: Mapping[str, Any]) -> dict[str, Any]:
+    ways: dict[str, Any] = {}
+    for target, found in (surroundings.get("on_the_way") or {}).items():
+        way: dict[str, Any] = {
+            direction: {key: {"name": place["name"], "plus_min": place["plus_min"]}
+                        for key, place in (found.get(direction) or {}).items()}
+            for direction in ("there", "back")
+        }
+        on_foot = (found.get("on_foot") or {}).get("grocery")
+        if on_foot:
+            way["onFoot"] = on_foot["name"]
+        ways[target] = way
+    return ways
+
+
+def _map_places(surroundings: Mapping[str, Any]) -> list[list[Any]]:
+    marks: list[list[Any]] = []
+    seen: set[tuple[Any, ...]] = set()
+
+    def mark(kind: str, place: Mapping[str, Any], label: str) -> None:
+        key = (kind, place["name"], place["lat"], place["lon"])
+        if key not in seen:
+            seen.add(key)
+            marks.append([*key, label])
+
+    for mode, how in (("walk", "on foot"), ("drive", "by car")):
+        for category, places in (surroundings.get(mode) or {}).items():
+            for place in places if category in CATEGORY_WORDS else ():
+                mark(category, place, f"{CATEGORY_WORDS[category]} {how} {place['min']} min")
+    for target, found in (surroundings.get("on_the_way") or {}).items():
+        for direction in ("there", "back"):
+            for category, place in (found.get(direction) or {}).items():
+                word = "on the way to" if direction == "there" else "on the way back from"
+                mark(category, place, f"{CATEGORY_WORDS[category]} {word} {target}, +{place['plus_min']} min")
+        for category, place in (found.get("on_foot") or {}).items():
+            mark(category, place, f"{CATEGORY_WORDS[category]} on foot to the stop for {target}")
+    for kind, near in (surroundings.get("around") or {}).items():
+        mark(kind, near, f"{AROUND_WORDS.get(kind, kind)} {distance_label(near['m'])}")
+    return marks
 
 
 def _fact(fact: Fact) -> dict[str, Any]:

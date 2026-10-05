@@ -179,6 +179,7 @@ details.rejected summary { cursor: pointer; }
 .routes dt { color: var(--muted); padding-top: 1px; white-space: nowrap; }
 .routes dd { margin: 0; min-width: 0; }
 .journey { display: flex; flex-wrap: wrap; align-items: center; gap: 2px 6px; }
+.car { display: block; font-size: 12px; color: var(--muted); }
 .journey .legs { display: inline-flex; flex-wrap: wrap; align-items: center; gap: 3px; }
 .journey .arrow { color: var(--muted); }
 .journey .time { font: 600 14px var(--display); font-variant-numeric: tabular-nums; white-space: nowrap; }
@@ -245,6 +246,8 @@ details.how .chip { margin-right: 4px; }
   font: 700 13px var(--display); color: var(--ink); text-shadow: 0 0 3px var(--surface), 0 0 3px var(--surface);
 }
 .flat-icon b { color: var(--accent); font-size: 22px; line-height: 1; }
+.place-icon span { display: grid; place-items: center; width: 18px; height: 18px; border-radius: 50%; transform: translate(-9px, -9px);
+  font: 700 11px/1 var(--body); color: var(--surface); border: 1.5px solid var(--surface); }
 .stack-icon span {
   display: grid; place-items: center; width: 22px; height: 22px; border-radius: 50%; transform: translate(-11px, -11px);
   font: 700 12px/1 var(--display); border: 2px solid var(--surface); box-shadow: 0 0 0 1px var(--muted);
@@ -324,6 +327,8 @@ details.how .chip { margin-right: 4px; }
         <option value="transfers">Fewest transfers</option>
         <option value="every">Most frequent</option>
         <option value="walk">Least walking</option>
+        <option value="grocery">Nearest grocery on foot</option>
+        <option value="gym">Nearest gym on foot</option>
         <option value="price">Cheapest</option>
         <option value="ratio">Cheapest €/m² vs district</option>
         <option value="area">Largest</option>
@@ -478,11 +483,17 @@ details.how .chip { margin-right: 4px; }
     $("visit-label").textContent = "New or cheaper since my last visit (" + shortDay(lastVisit) + ")";
   }
 
+  const nearestOnFoot = (card, category) => {
+    const found = card.nearby.walk && card.nearby.walk[category] && card.nearby.walk[category][0];
+    return found ? [found.min] : null;
+  };
   const JOURNEY_SORTS = { time: "fastest journey incl. average wait", transfers: "fewest transfers", every: "most frequent", walk: "least walking" };
   const CARD_SORTS = {
     price: ["cheapest", (card) => card.price == null ? null : [card.price]],
     ratio: ["cheapest €/m² vs district", (card) => card.ratio == null ? null : [card.ratio]],
     area: ["largest", (card) => card.area == null ? null : [-card.area]],
+    grocery: ["nearest grocery on foot", (card) => nearestOnFoot(card, "grocery")],
+    gym: ["nearest gym on foot", (card) => nearestOnFoot(card, "gym")],
   };
   const sortKey = (card) => JOURNEY_SORTS[state.sort]
     ? (card.sort[state.sort] && card.sort[state.sort][state.to]) || null
@@ -578,6 +589,34 @@ details.how .chip { margin-right: 4px; }
     : "";
   const utilityHtml = (card) => '<p class="utility">Heating: <b>' + esc(HEATING[card.heating.value] || card.heating.value) +
     "</b> · Hot water: <b>" + esc(HOT_WATER[card.hotWater.value] || card.hotWater.value) + "</b></p>";
+  const carHtml = (drive) => drive ? '<span class="car">car ≈ ' + drive.min + " min · " + drive.km + " km, back " + drive.back_min + " min</span>" : "";
+  const CATEGORY = { grocery: "grocery", gym: "gym", mall: "mall", diy: "DIY" };
+  const AROUND = { industrial: "industrial zone", works: "factory", cemetery: "cemetery", bog: "bog", landfill: "landfill",
+    wastewater: "sewage plant", railway: "railway yard" };
+  const distanceText = (metres) => metres < 1000 ? metres + " m" : (metres / 1000).toFixed(1) + " km";
+  const placeText = (category, place) => CATEGORY[category] + (place.name ? " " + esc(place.name) : "");
+  const surroundingsHtml = (card) => {
+    const lines = [];
+    const nearest = (mode, categories, how) => categories
+      .map((category) => [category, ((card.nearby[mode] || {})[category] || [])[0]])
+      .filter(([, place]) => place).map(([category, place]) => placeText(category, place) + " <b>" + place.min + " min</b>" + how(place));
+    const onFoot = nearest("walk", ["grocery", "gym", "mall"], () => "");
+    const byCar = nearest("drive", ["diy", "mall"], (place) => " · " + place.km + " km");
+    if (card.nearby.walk) lines.push("On foot: " + (onFoot.length ? onFoot.join(" · ") : "no grocery, gym or mall within 30 min"));
+    if (byCar.length) lines.push("By car: " + byCar.join(" · "));
+    for (const [target, way] of Object.entries(card.onTheWay)) {
+      const parts = (way.onFoot ? ["grocery " + esc(way.onFoot) + " on foot to the stop"] : [])
+        .concat(Object.entries(way.there).map(([category, place]) => placeText(category, place) + " +" + place.plus_min + " min by car"));
+      const back = Object.entries(way.back).map(([category, place]) => placeText(category, place) + " +" + place.plus_min + " min");
+      if (parts.length || back.length) {
+        lines.push("On the way to " + esc(target) + ": " + (parts.length ? parts.join(" · ") : "—") +
+          (back.length ? "; back: " + back.join(" · ") : ""));
+      }
+    }
+    const around = Object.entries(card.around).map(([kind, near]) => (AROUND[kind] || kind) + " " + distanceText(near.m));
+    if (around.length) lines.push("Around: " + around.join(" · "));
+    return lines.map((line) => '<p class="utility">' + line + "</p>").join("");
+  };
   const WEAR = { V1: "very good", V2: "good", V3: "satisfactory", V4: "unsatisfactory", V5: "critical" };
   const buildingHtml = (building) => {
     const surveyed = building.wear_date ? " " + esc(building.wear_date.slice(0, 4)) : ", survey date not recorded";
@@ -615,7 +654,7 @@ details.how .chip { margin-right: 4px; }
     const located = Object.keys(card.best).length > 0;
     const routes = located
       ? '<dl class="routes">' + data.targetNames.map((name) =>
-          "<dt>" + esc(name) + "</dt><dd>" + bestHtml(card.best[name]) + "</dd>").join("") + "</dl>"
+          "<dt>" + esc(name) + "</dt><dd>" + bestHtml(card.best[name]) + carHtml(card.drive[name]) + "</dd>").join("") + "</dl>"
       : '<p class="history">Address not found in the register: no journeys.</p>';
     const quotes = [...new Set([card.layout.quote, card.land.quote, card.heating.quote, card.hotWater.quote,
       card.replanning.quote, ...card.alerts.map((alert) => alert.quote)].filter(Boolean))];
@@ -643,7 +682,7 @@ details.how .chip { margin-right: 4px; }
       '<span class="addr">' + esc(card.address || "address ?") + (card.approx ? " ≈" : "") +
       (card.district ? '<span class="district"> · ' + esc(card.district) + "</span>" : "") +
       (seenOf(card) ? '<span class="seen"> · opened</span>' : "") + "</span></div>" +
-      alertsHtml(card) + '<div class="facts">' + pills(card) + "</div>" + utilityHtml(card) + buildingHtml(card.building) +
+      alertsHtml(card) + '<div class="facts">' + pills(card) + "</div>" + utilityHtml(card) + buildingHtml(card.building) + surroundingsHtml(card) +
       historyHtml(card.history) + routes + why + ads + '<div class="foot">' +
       (card.lat != null ? '<button type="button" class="small-btn" data-act="map" data-id="' + esc(card.id) + '">On the map</button>' : "") +
       '<a href="' + esc(card.url) + '" target="_blank" rel="noopener" data-open="' + esc(card.id) + '">ss.com ↗</a></div></article>';
@@ -1064,6 +1103,8 @@ details.how .chip { margin-right: 4px; }
     '<span class="walk">' + walkText(journey.walk_m) + "</span>" +
     '<span class="stops">' + esc(journey.legs.map((leg) => mapStopName(leg.board) + " → " + mapStopName(leg.alight)).join(" · ")) + "</span></button>";
 
+  const PLACE_TOKENS = { grocery: "--good", gym: "--accent", diy: "--mark", mall: "--fav" };
+  const PLACE_LETTERS = { grocery: "G", gym: "F", diy: "D", mall: "M" };
   const renderFocus = () => {
     const card = cardById.get(focus);
     const journeys = mapData.journeys[card.id] || {};
@@ -1079,6 +1120,13 @@ details.how .chip { margin-right: 4px; }
       icon: L.divIcon({ className: "flat-icon", html: "<span><b>●</b>" + esc(money(card.price) + " €") + "</span>", iconSize: [0, 0] }),
       keyboard: false, zIndexOffset: 1200,
     }).addTo(focusLayer);
+    for (const [kind, name, lat, lon, label] of (mapData.places && mapData.places[card.id]) || []) {
+      L.marker([lat, lon], {
+        icon: L.divIcon({ className: "place-icon", iconSize: [0, 0], html: '<span style="background:' + token(PLACE_TOKENS[kind] || "--bad") + '">' +
+          (PLACE_LETTERS[kind] || "!") + "</span>" }),
+        keyboard: false, zIndexOffset: 1100,
+      }).bindPopup("<b>" + esc(name || label) + "</b><br>" + esc(label)).addTo(focusLayer);
+    }
     const panels = [];
     for (const target of data.targets) {
       bounds.push([target.lat, target.lon]);

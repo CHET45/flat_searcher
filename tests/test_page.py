@@ -170,6 +170,34 @@ class RenderPageTests(TestCase):
         built = _cards(_page([_record("b")], [{**_located("b"), "building": {"wear": "V3", "wear_date": "2019-03-02", "built": 1975, "floors": 9}}]))["b"]
         self.assertEqual(built["building"], {"wear": "V3", "wear_date": "2019-03-02", "built": 1975, "floors": 9})
 
+    def test_surroundings_reach_the_card_and_their_coordinates_only_the_map_script(self) -> None:
+        rimi = {"name": "Rimi", "lat": 56.92, "lon": 24.12}
+        surroundings = {
+            "walk": {"grocery": [{**rimi, "min": 4, "m": 330}], "gym": [], "mall": []},
+            "drive": {"targets": {"office": {"min": 14, "km": 6.2, "back_min": 16, "back_km": 6.9}},
+                      "grocery": [], "diy": [{"name": "Depo", "lat": 56.9, "lon": 24.2, "min": 7, "km": 3.1}],
+                      "mall": []},
+            "on_the_way": {"office": {"there": {"diy": {"name": "Depo", "lat": 56.9, "lon": 24.2, "plus_min": 2}},
+                                      "back": {}, "on_foot": {"grocery": rimi}}},
+            "around": {"cemetery": {"name": "Meža kapi", "m": 420, "lat": 56.93, "lon": 24.13}},
+        }
+        page = _page([_record("a")], [{**_located("a"), "surroundings": surroundings}])
+        card = _cards(page)["a"]
+        self.assertEqual(card["drive"], {"office": {"min": 14, "km": 6.2, "back_min": 16, "back_km": 6.9}})
+        self.assertEqual(card["nearby"], {"walk": {"grocery": [{"name": "Rimi", "min": 4}], "gym": [], "mall": []},
+                                          "drive": {"grocery": [], "diy": [{"name": "Depo", "min": 7, "km": 3.1}],
+                                                    "mall": []}})
+        self.assertEqual(card["onTheWay"], {"office": {"there": {"diy": {"name": "Depo", "plus_min": 2}}, "back": {},
+                                                       "onFoot": "Rimi"}})
+        self.assertEqual(card["around"], {"cemetery": {"name": "Meža kapi", "m": 420}})
+        self.assertNotIn("56.92", json.dumps(card))
+        self.assertEqual(_map(page)["places"]["a"], [
+            ["grocery", "Rimi", 56.92, 24.12, "grocery on foot 4 min"],
+            ["diy", "Depo", 56.9, 24.2, "DIY by car 7 min"],
+            ["cemetery", "Meža kapi", 56.93, 24.13, "cemetery 420 m"],
+        ])
+        self.assertEqual(_cards(_page([_record("b")]))["b"]["nearby"], {})
+
     def test_the_card_shows_the_option_with_the_shortest_expected_time(self) -> None:
         page = _page([_record("a")], [_located("a", office=[RARE, SLOW, JOURNEY])])
         self.assertEqual(_cards(page)["a"]["best"]["office"]["minutes"], 24)
@@ -360,6 +388,26 @@ class PageScriptTests(TestCase):
                                   {"wait": 400}]
         self.assertEqual(self._run(self._flats(), late_resize)["scrolled"], [[0, -400]])
         self.assertEqual(self._run(self._flats(), turn[:2] + turn[4:])["scrolled"], [])
+
+    def test_the_card_tells_what_is_near_on_the_way_and_around_and_sorts_by_the_nearest_grocery(self) -> None:
+        def near(grocery: int) -> dict:
+            rimi = {"name": "Rimi", "lat": 56.92, "lon": 24.12}
+            return {"walk": {"grocery": [{**rimi, "min": grocery, "m": grocery * 83}], "gym": [], "mall": []},
+                    "drive": {"targets": {"office": {"min": 14, "km": 6.2, "back_min": 16, "back_km": 6.9}},
+                              "grocery": [], "diy": [{"name": "Depo", "lat": 56.9, "lon": 24.2, "min": 7, "km": 3.1}],
+                              "mall": []},
+                    "on_the_way": {"office": {"there": {"diy": {"name": "Depo", "lat": 56.9, "lon": 24.2, "plus_min": 2}},
+                                              "back": {}, "on_foot": {"grocery": rimi}}},
+                    "around": {"cemetery": {"name": "Meža kapi", "m": 420, "lat": 56.93, "lon": 24.13}}}
+        listings = [_record("far", price=30000), _record("near", price=38000, house="2")]
+        transit = [{**_located("far"), "surroundings": near(12)}, {**_located("near"), "surroundings": near(3)}]
+        shown = self._run(_page(listings, transit), [{"click": "view-all"}, {"change": "f-sort", "value": "grocery"}])
+        self.assertEqual(shown["cards"], ["near", "far"])
+        self.assertIn("car ≈ 14 min · 6.2 km, back 16 min", shown["list"])
+        self.assertIn("On foot: grocery Rimi <b>3 min</b>", shown["list"])
+        self.assertIn("By car: DIY Depo <b>7 min</b> · 3.1 km", shown["list"])
+        self.assertIn("On the way to office: grocery Rimi on foot to the stop · DIY Depo +2 min by car", shown["list"])
+        self.assertIn("Around: cemetery 420 m", shown["list"])
 
     def test_sorting_by_price_reorders_the_cards(self) -> None:
         shown = self._run(self._flats(), [{"click": "view-all"}, {"change": "f-sort", "value": "area"}])
