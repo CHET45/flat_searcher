@@ -12,6 +12,9 @@ const code = html.match(/<script>\n([\s\S]*?)<\/script>/)[1];
 const markup = html.replace(/<script[\s\S]*?<\/script>/g, "");
 const staticIds = new Set(["data", ...[...markup.matchAll(/ id="([^"]+)"/g)].map((m) => m[1])]);
 const loaded = [];
+const layout = {};
+const scrolled = [];
+const windowListeners = {};
 if (process.argv[5]) Date.now = () => Date.parse(process.argv[5]);
 
 const elements = new Map();
@@ -51,6 +54,7 @@ class Element {
     return child;
   }
   scrollIntoView() {}
+  getBoundingClientRect() { return layout[this.id] || { top: 0, bottom: 0 }; }
 }
 
 global.document = {
@@ -74,6 +78,9 @@ global.localStorage = {
 global.matchMedia = () => ({ matches: false, addEventListener() {} });
 global.getComputedStyle = () => ({ getPropertyValue: () => "#123456" });
 global.scrollTo = () => {};
+global.scrollBy = (x, y) => scrolled.push([x, y]);
+global.requestAnimationFrame = (callback) => setTimeout(callback, 0);
+global.addEventListener = (type, listener) => (windowListeners[type] = windowListeners[type] || []).push(listener);
 
 const settle = () => new Promise((resolve) => setTimeout(resolve, 5));
 const target = (action) => ({
@@ -88,7 +95,13 @@ const target = (action) => ({
   new Function(code)();
   await settle();
   for (const action of actions) {
-    if (action.change) {
+    if (action.layout) {
+      Object.assign(layout, action.layout);
+    } else if (action.event) {
+      for (const listener of windowListeners[action.event] || []) listener({});
+    } else if (action.wait) {
+      await new Promise((resolve) => setTimeout(resolve, action.wait));
+    } else if (action.change) {
       const element = document.getElementById(action.change);
       if ("value" in action) element.value = action.value;
       if ("checked" in action) element.checked = action.checked;
@@ -109,6 +122,7 @@ const target = (action) => ({
     visitDisabled: document.getElementById("f-visit").disabled,
     mapNote: note.hidden ? null : note.textContent,
     stale: stale.hidden ? null : stale.textContent,
+    scrolled,
     loaded,
     storage: Object.fromEntries(storage),
   }));

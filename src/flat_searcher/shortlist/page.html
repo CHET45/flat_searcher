@@ -707,6 +707,36 @@ details.how .chip { margin-right: 4px; }
     }
   };
 
+  let place = null;
+  let turning = null;
+  let noting = false;
+  let settleTimer = null;
+  const topCard = () => {
+    for (const card of current.slice(0, rendered)) {
+      const element = $("c-" + card.id);
+      const box = element && element.getBoundingClientRect();
+      if (box && box.bottom > 0) return { id: card.id, top: box.top };
+    }
+    return null;
+  };
+  window.addEventListener("scroll", () => {
+    if (turning || noting) return;
+    noting = true;
+    requestAnimationFrame(() => { noting = false; if (!turning) place = topCard(); });
+  }, { passive: true });
+  const keepPlace = () => {
+    if (!turning) turning = place || { id: null };
+    clearTimeout(settleTimer);
+    settleTimer = setTimeout(() => requestAnimationFrame(() => requestAnimationFrame(() => {
+      const element = turning.id && $("c-" + turning.id);
+      if (element && !$("list-view").hidden) window.scrollBy(0, element.getBoundingClientRect().top - turning.top);
+      turning = null;
+      place = topCard();
+    })), 200);
+  };
+  window.addEventListener("orientationchange", keepPlace);
+  window.addEventListener("resize", keepPlace);
+
   let toastTimer = null;
   const toast = (text, undo) => {
     $("toast-text").textContent = text;

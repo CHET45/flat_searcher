@@ -343,6 +343,18 @@ class PageScriptTests(TestCase):
         self.assertNotIn('class="alerts"', cards["plain"])
         self.assertNotIn("Building:", cards["plain"])
 
+    def test_turning_the_phone_keeps_the_card_that_was_at_the_top_in_place(self) -> None:
+        portrait = {"c-small": {"top": -400, "bottom": -100}, "c-big": {"top": -100, "bottom": 200},
+                    "c-dear": {"top": 200, "bottom": 500}}
+        landscape = {"c-small": {"top": -900, "bottom": -500}, "c-big": {"top": -500, "bottom": -150},
+                     "c-dear": {"top": -150, "bottom": 200}}
+        turn = [{"click": "view-all"}, {"layout": portrait}, {"event": "scroll"}, {"wait": 20},
+                {"event": "orientationchange"}, {"layout": landscape}, {"event": "resize"}, {"wait": 300}]
+        self.assertEqual(self._run(self._flats(), turn)["scrolled"], [[0, -400]])
+        resize_only = turn[:4] + [{"layout": landscape}, {"event": "resize"}, {"wait": 300}]
+        self.assertEqual(self._run(self._flats(), resize_only)["scrolled"], [[0, -400]])
+        self.assertEqual(self._run(self._flats(), turn[:2] + turn[4:])["scrolled"], [])
+
     def test_sorting_by_price_reorders_the_cards(self) -> None:
         shown = self._run(self._flats(), [{"click": "view-all"}, {"change": "f-sort", "value": "area"}])
         self.assertEqual(shown["cards"], ["big", "small", "dear"])
