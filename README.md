@@ -32,6 +32,7 @@ SS.com ──index──► library ──judge──► verdicts          local
 | `transit` | Geocodes listings against the state address register (VZD), attaches the building's wear group, age and walls from the VZD cadastre, measures what is near on foot and by car from OpenStreetMap (groceries, gyms, DIY stores, malls, what lies on the way to each target, nuisances around) and the nearest gym by public transport, then runs RAPTOR over the Rīgas Satiksme GTFS timetable backwards from each target, with walks along the OpenStreetMap pedestrian graph. Each option is measured on the timetable: median door-to-door minutes and how often it runs. |
 | `digest` | Applies the gates and a transparent ordering (no score) from `criteria.toml`, merges duplicate ads of one flat, and writes `digest/<day>.md` and a static page in `digest/<day>/`. |
 | `publish` | Force-pushes the page to a GitHub Pages repository as a single commit. |
+| `daily` | All of the above as one resumable run with its progress in a file: the page is published first, then new candidates are judged while the graphics card is free, and the page is published again. `monitor` opens a window over it; `switch` turns it on or off. |
 
 The page opens on **Today**: flats that pass a few soft rules and that no other flat beats at
 once on price, travel time, floor area and building wear. **All** lists every candidate, sortable by journey
@@ -59,6 +60,9 @@ python -m flat_searcher digest
 
 `judge` needs [Ollama](https://ollama.com) with `qwen3.5:9b` pulled.
 
+On Windows, `scripts/install-autostart.ps1` starts `daily` with the computer and puts two
+shortcuts on the desktop: the progress window and an on/off switch.
+
 ## Configuration
 
 | Variable | Purpose |
@@ -68,6 +72,7 @@ python -m flat_searcher digest
 | `FLAT_SEARCHER_SS_START_URL` | Crawl start page; defaults to all Riga apartment sale listings. |
 | `FLAT_SEARCHER_HOME` | Caches and logs; defaults to `~/.flat_searcher`. |
 | `FLAT_SEARCHER_PAGES_REPO`, `_PAGES_TOKEN` | GitHub Pages repository for `publish`. |
+| `FLAT_SEARCHER_GPU_BUSY_PROCESSES` | Comma-separated command-line substrings of programs that `daily` must not share the graphics card with. |
 
 Variables may also come from `.env` in the working directory or a file passed with `--env-file`.
 The CLI prints counts and stage outcomes only — never a URL, token, path or target name.
@@ -82,12 +87,14 @@ src/flat_searcher/
   judging/      Ollama runner and the verdict schema
   transit/      address register, GTFS, RAPTOR journeys, OSM walking
   shortlist/    criteria, extracted facts, gates and ordering, digest and page
+  daily/        the resumable daily run, its progress file, GPU guard, monitor window
   publishing.py GitHub Pages publishing
 docs/
   pipeline.md         library format, promotion rules, transit, shortlist, operations
   ai-instructions.md  the judging contract, sent to the model as its system prompt
 scripts/
-  judge-when-free.ps1 runs judge once no other process is using Ollama
+  judge-when-free.ps1    runs judge once no other process is using Ollama
+  install-autostart.ps1  starts daily with Windows; desktop shortcuts for the monitor and the switch
 ```
 
 ## Development

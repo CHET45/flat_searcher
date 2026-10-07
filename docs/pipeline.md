@@ -107,9 +107,46 @@ python -m flat_searcher index
 
 ### The daily loop
 
-`index → transit → digest → publish`, and `judge` on the newest queue when the model step is
-wanted. A full crawl takes ~45 minutes and a queue of 170 listings ~1 hour, so detach long runs —
-the shell that started them is otherwise the thing that stops them:
+`python -m flat_searcher daily` runs the whole day as one resumable run:
+
+| Step | |
+| --- | --- |
+| Crawl SS.com | `index`; done already when an index run finished earlier the same day. Waits for a network connection first. |
+| Journeys and surroundings | `transit` |
+| Shortlist page | `digest` |
+| Publish the page | `publish`; skipped without `FLAT_SEARCHER_PAGES_REPO` |
+| Model verdicts for new candidates | `judge` on the shortlist's candidates that have no verdict yet, from the newest queue day holding each; starts Ollama when it is not running and is skipped when it cannot be reached |
+| Merge the verdicts | folds every verdict into the library without a new crawl |
+| Shortlist page with verdicts, Publish again | `digest` and `publish` once more |
+
+The last three are skipped when nothing new was judged, so the page goes out before the model
+step, and again only when verdicts change it. The model runs only while the graphics card is
+free: no other program connected to Ollama, no more than 2.5 GB of video memory held by other
+programs (`nvidia-smi`), and no running process whose command line contains one of the
+comma-separated substrings in `FLAT_SEARCHER_GPU_BUSY_PROCESSES`. When the card gets busy the
+model is unloaded and judging waits until the card has been free for two minutes.
+
+Progress goes to `FLAT_SEARCHER_HOME/daily/progress.json` (steps, counts, the last 300 log lines)
+and `daily.log` next to it. A rerun on the same day resumes from the first unfinished step;
+`--fresh` starts over. Only one run holds `run.lock` at a time. `daily --stop` asks the run to
+stop at its next checkpoint (within a second during the crawl and the model step) and ends the
+process tree if it has not stopped after 20 seconds.
+
+`python -m flat_searcher monitor` opens a window over the run: each step's status, count and
+time, a progress bar with the time left, the log, Start / Stop, and a checkbox for starting with
+the computer. `python -m flat_searcher switch [on|off]` turns the loop off (stops today's run, no
+start with the computer) or on (starts today's run unless it is running or done) and says so in a
+dialog; without an argument it toggles.
+
+`scripts/install-autostart.ps1` puts `daily --startup` into the Windows Startup folder and two
+shortcuts on the desktop, *Flat Searcher progress* (`monitor`) and *Flat Searcher on-off*
+(`switch`); `-Remove` takes them away. The shortcuts start the venv's `pythonw.exe` in the
+repository, so the `.env` there configures them. `daily --startup` does nothing when switched
+off or when today's run has finished.
+
+The steps by hand: `index → transit → digest → publish`, and `judge` on the newest queue when the
+model step is wanted. A full crawl takes ~45 minutes and a queue of 170 listings ~1 hour, so
+detach long runs — the shell that started them is otherwise the thing that stops them:
 
 ```powershell
 $env:FLAT_SEARCHER_LIBRARY_PATH = "data\library"

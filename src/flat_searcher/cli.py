@@ -1,17 +1,36 @@
-"""Command line entry points: index, judge, transit, digest, publish and show-config."""
+"""Command line entry points: index, judge, transit, digest, publish, the daily loop and show-config."""
 
 from __future__ import annotations
 
 import argparse
+import contextlib
+import io
+import logging
 import os
+import socket
 import sys
+import threading
 import zipfile
+from collections.abc import Callable
 from datetime import datetime
 from pathlib import Path
-from typing import Sequence, TextIO
+from typing import Any, Sequence, TextIO
 
 from flat_searcher.config import AppConfig
-from flat_searcher.indexing import IndexerOptions, IndexerRun
+from flat_searcher.daily.control import (
+    DailyPaths,
+    RunLock,
+    is_running,
+    launch,
+    set_switched_on,
+    stop_run,
+    switched_on,
+)
+from flat_searcher.daily.gpu import GpuGuard, start_ollama
+from flat_searcher.daily.judge import CandidateJudge, unjudged_candidates
+from flat_searcher.daily.progress import DONE, FAILED, SKIPPED, ProgressFile, read_progress
+from flat_searcher.daily.run import DailyRun, Step, StepContext, StepResult
+from flat_searcher.indexing import IndexerOptions, IndexerRun, merge_verdicts
 from flat_searcher.judging import JudgeFilters, JudgeOptions, JudgeRun, OllamaJudgeClient
 from flat_searcher.judging.ollama import DEFAULT_MODEL as OLLAMA_DEFAULT_MODEL
 from flat_searcher.library import (
@@ -34,6 +53,9 @@ LIBRARY_PATH_VARIABLE = "FLAT_SEARCHER_LIBRARY_PATH"
 LIBRARY_REPO_VARIABLE = "FLAT_SEARCHER_LIBRARY_REPO"
 LIBRARY_TOKEN_VARIABLE = "FLAT_SEARCHER_LIBRARY_TOKEN"
 LIBRARY_BRANCH_VARIABLE = "FLAT_SEARCHER_LIBRARY_BRANCH"
+GPU_BUSY_VARIABLE = "FLAT_SEARCHER_GPU_BUSY_PROCESSES"
+NETWORK_PROBE_HOST = "www.ss.com"
+NETWORK_POLL_SECONDS = 15.0
 
 
 def build_parser() -> argparse.ArgumentParser:
@@ -159,6 +181,35 @@ def build_parser() -> argparse.ArgumentParser:
     )
     _add_env_file_argument(publish_parser)
 
+    daily_parser = subparsers.add_parser(
+        "daily",
+        help="The whole day in one run, with progress for the monitor: index, transit, digest, "
+        "publish, then judge new candidates once the GPU is free and publish again.",
+    )
+    daily_parser.add_argument(
+        "--startup",
+        action="store_true",
+        help="Started with the computer: do nothing when switched off or already done today.",
+    )
+    daily_parser.add_argument(
+        "--fresh", action="store_true", help="Start today's run over instead of resuming it."
+    )
+    daily_parser.add_argument("--stop", action="store_true", help="Stop the running daily run.")
+    _add_env_file_argument(daily_parser)
+
+    monitor_parser = subparsers.add_parser(
+        "monitor", help="Open a window with the daily run's progress."
+    )
+    _add_env_file_argument(monitor_parser)
+
+    switch_parser = subparsers.add_parser(
+        "switch",
+        help="Turn the daily run on (it runs now and with the computer) or off (it stops). "
+        "Without an argument it toggles.",
+    )
+    switch_parser.add_argument("state", nargs="?", choices=("on", "off"))
+    _add_env_file_argument(switch_parser)
+
     return parser
 
 
@@ -188,6 +239,12 @@ def main(argv: Sequence[str] | None = None) -> int:
         return _run_digest(config, args)
     if args.command == "publish":
         return _run_publish(config, args)
+    if args.command == "daily":
+        return _run_daily(config, args)
+    if args.command == "monitor":
+        return _run_monitor(config)
+    if args.command == "switch":
+        return _run_switch(config, args)
 
     parser.error(f"Unknown command: {args.command}")
     return 2
@@ -209,7 +266,11 @@ def _open_library(config: AppConfig) -> LibraryStore | None:
     return None
 
 
-def _run_index(config: AppConfig, args: argparse.Namespace) -> int:
+def _run_index(
+    config: AppConfig,
+    args: argparse.Namespace,
+    progress: Callable[[str, int, int], None] | None = None,
+) -> int:
     store = _open_library(config)
     if store is None:
         return 2
@@ -224,7 +285,7 @@ def _run_index(config: AppConfig, args: argparse.Namespace) -> int:
     try:
         if git_store is not None:
             git_store.pull()
-        result = IndexerRun(store, options).run()
+        result = IndexerRun(store, options).run(progress=progress)
         pushed = False
         if git_store is not None and not args.dry_run:
             pushed = git_store.push(f"Index {result.meta['run_date']}")
@@ -312,7 +373,11 @@ def _load_criteria(store: LibraryStore) -> tuple[Criteria | None, bool]:
         return None, False
 
 
-def _run_transit(config: AppConfig, args: argparse.Namespace) -> int:
+def _run_transit(
+    config: AppConfig,
+    args: argparse.Namespace,
+    progress: Callable[[int, int], None] | None = None,
+) -> int:
     store = _open_library(config)
     if store is None:
         return 2
@@ -325,7 +390,7 @@ def _run_transit(config: AppConfig, args: argparse.Namespace) -> int:
         if criteria is None:
             print("No criteria.toml in the library: listings are located, no target is checked.")
         sources = TransitSources(config.cache_dir / "transit", refresh=args.refresh)
-        result = TransitRun(store, sources, criteria, datetime.now().astimezone()).run()
+        result = TransitRun(store, sources, criteria, datetime.now().astimezone()).run(progress)
         if isinstance(store, GitLibraryStore):
             store.push("Transit")
     except LibraryError as error:
@@ -432,6 +497,248 @@ def _run_publish(config: AppConfig, args: argparse.Namespace) -> int:
         return 1
     print(f"published day={day} files={files} bytes={size}")
     return 0
+
+
+def _daily_paths(config: AppConfig) -> DailyPaths:
+    return DailyPaths(config.app_home / "daily")
+
+
+def _run_daily(config: AppConfig, args: argparse.Namespace) -> int:
+    paths = _daily_paths(config)
+    if args.stop:
+        print(f"daily: {stop_run(paths)}")
+        return 0
+    if args.startup and not switched_on(paths):
+        print("daily: switched off")
+        return 0
+    lock = RunLock(paths.lock)
+    if not lock.acquire():
+        print("daily: already running")
+        return 0
+    day = datetime.now().astimezone().date().isoformat()
+    console = sys.stdout
+    progress = ProgressFile(
+        paths.progress,
+        paths.log,
+        echo=(lambda line: print(line, file=console, flush=True)) if console else None,
+    )
+    forward = _ProgressLog(progress)
+    logging.getLogger().addHandler(forward)
+    try:
+        paths.stop.unlink(missing_ok=True)
+        outcome = DailyRun(
+            progress, _daily_steps(config, day), paths.stop_requested, day, os.getpid()
+        ).run(fresh=args.fresh)
+    finally:
+        logging.getLogger().removeHandler(forward)
+        paths.stop.unlink(missing_ok=True)
+        lock.release()
+    print(f"daily {day}: {outcome}")
+    return 1 if outcome == FAILED else 0
+
+
+class _ProgressLog(logging.Handler):
+    """Warnings from the stages, into the run's log that the monitor shows."""
+
+    def __init__(self, progress: ProgressFile) -> None:
+        super().__init__(logging.WARNING)
+        self._progress = progress
+
+    def emit(self, record: logging.LogRecord) -> None:
+        try:
+            self._progress.log(f"{record.levelname.lower()}: {record.getMessage()}")
+        except Exception:
+            self.handleError(record)
+
+
+def _daily_steps(config: AppConfig, day: str) -> list[Step]:
+    def index(context: StepContext) -> StepResult:
+        earlier = _indexed_on(config, day)
+        if earlier:
+            return StepResult(DONE, earlier)
+        _wait_for_network(context)
+        return _captured(
+            _run_index,
+            config,
+            argparse.Namespace(limit=None, request_delay=1.0, dry_run=False),
+            progress=lambda unit, done, total: context.count(done, total, unit),
+        )
+
+    def transit(context: StepContext) -> StepResult:
+        return _captured(
+            _run_transit,
+            config,
+            argparse.Namespace(refresh=False),
+            progress=lambda done, total: context.count(done, total, "listings"),
+        )
+
+    def digest(context: StepContext) -> StepResult:
+        return _captured(_run_digest, config, argparse.Namespace(day=day))
+
+    def publish(context: StepContext) -> StepResult:
+        if not config.pages_repo:
+            return StepResult(SKIPPED, "no FLAT_SEARCHER_PAGES_REPO")
+        return _captured(_run_publish, config, argparse.Namespace(day=day))
+
+    def judge(context: StepContext) -> StepResult:
+        store = _open_library_quietly(config)
+        criteria = None if store is None else _load_criteria(store)[0]
+        if store is None or criteria is None:
+            return StepResult(SKIPPED, "no library or criteria", {"judged": 0})
+        client = OllamaJudgeClient()
+        guard = GpuGuard(
+            client.loaded_vram_mib,
+            busy_patterns=os.environ.get(GPU_BUSY_VARIABLE, "").split(","),
+        )
+        plan, unqueued = unjudged_candidates(store, criteria)
+        return CandidateJudge(
+            store,
+            client,
+            guard,
+            Path("docs/ai-instructions.md"),
+            HttpTextClient(request_delay_seconds=0.3),
+            start_ollama,
+        ).run(context, plan, unqueued)
+
+    def merge(context: StepContext) -> StepResult:
+        store = _open_library_quietly(config)
+        if store is None:
+            return StepResult(FAILED, "no library")
+        if isinstance(store, GitLibraryStore):
+            store.pull()
+        records = store.load_listings()
+        counts = merge_verdicts(store, records)
+        store.save_listings(records)
+        if isinstance(store, GitLibraryStore):
+            store.push("Merge verdicts")
+        return StepResult(DONE, f"merged={counts['merged']} unknown={counts['unknown']}")
+
+    def after_new_verdicts(
+        action: Callable[[StepContext], StepResult],
+    ) -> Callable[[StepContext], StepResult]:
+        def step(context: StepContext) -> StepResult:
+            if not (context.results.get("judge") or {}).get("judged"):
+                return StepResult(SKIPPED, "nothing new was judged")
+            return action(context)
+
+        return step
+
+    return [
+        Step("index", "Crawl SS.com", index),
+        Step("transit", "Journeys and surroundings", transit),
+        Step("digest", "Shortlist page", digest),
+        Step("publish", "Publish the page", publish),
+        Step("judge", "Model verdicts for new candidates", judge),
+        Step("merge", "Merge the verdicts", after_new_verdicts(merge)),
+        Step("digest_again", "Shortlist page with verdicts", after_new_verdicts(digest)),
+        Step("publish_again", "Publish again", after_new_verdicts(publish)),
+    ]
+
+
+def _captured(
+    command: Callable[..., int], config: AppConfig, args: argparse.Namespace, **hooks: Any
+) -> StepResult:
+    """Runs a command; what it prints becomes the step's summary."""
+    buffer = io.StringIO()
+    with contextlib.redirect_stdout(buffer):
+        code = command(config, args, **hooks)
+    lines = [line.strip() for line in buffer.getvalue().splitlines() if line.strip()]
+    return StepResult(DONE if code == 0 else FAILED, " | ".join(lines))
+
+
+def _indexed_on(config: AppConfig, day: str) -> str | None:
+    """The counts of an index run that already finished on `day`, however it was started."""
+    store = _open_library_quietly(config)
+    if store is None or isinstance(store, GitLibraryStore):
+        return None
+    meta = store.load_meta()
+    try:
+        finished = datetime.fromisoformat(str(meta.get("finished_at"))).astimezone()
+    except ValueError:
+        return None
+    if meta.get("status") != "ok" or meta.get("dry_run") or finished.date().isoformat() != day:
+        return None
+    promote = next(
+        (
+            stage.get("counts") or {}
+            for stage in meta.get("stages") or []
+            if stage.get("name") == "promote"
+        ),
+        {},
+    )
+    counts = " ".join(f"{key}={value}" for key, value in promote.items())
+    return f"already ran at {finished:%H:%M}" + (f": {counts}" if counts else "")
+
+
+def _wait_for_network(context: StepContext) -> None:
+    waiting = False
+    while True:
+        try:
+            socket.getaddrinfo(NETWORK_PROBE_HOST, 443)
+            break
+        except OSError:
+            if not waiting:
+                context.wait("Waiting for an internet connection")
+                waiting = True
+            context.sleep(NETWORK_POLL_SECONDS)
+    if waiting:
+        context.resume()
+
+
+def _run_monitor(config: AppConfig) -> int:
+    from flat_searcher.daily.monitor import open_window
+
+    def page() -> Path | None:
+        store = _open_library_quietly(config)
+        if store is None or isinstance(store, GitLibraryStore):
+            return None
+        site = store.digest_site(datetime.now().astimezone().date().isoformat())
+        page = site / "index.html" if site is not None else None
+        return page if page is not None and page.is_file() else None
+
+    open_window(_daily_paths(config), Path.cwd(), page)
+    return 0
+
+
+def _run_switch(config: AppConfig, args: argparse.Namespace) -> int:
+    from flat_searcher.daily.monitor import show_message
+
+    paths = _daily_paths(config)
+    turn_on = args.state == "on" if args.state else not switched_on(paths)
+    set_switched_on(paths, turn_on)
+    stopping = None
+    if turn_on:
+        today = datetime.now().astimezone().date().isoformat()
+        state = read_progress(paths.progress) or {}
+        if is_running(paths):
+            now = "Today's analysis is already running."
+        elif state.get("day") == today and state.get("state") == DONE:
+            now = "Today's analysis has already finished."
+        else:
+            launch(["daily"], Path.cwd())
+            now = "Today's analysis starts now."
+        text = (
+            f"Flat Searcher is ON.\n\n{now} It will also start every time the computer starts."
+        )
+    else:
+        now = "Today's analysis is stopping." if is_running(paths) else "Nothing was running."
+        # Stopping may take a few seconds; the dialog should not wait for it.
+        stopping = threading.Thread(target=stop_run, args=(paths,))
+        stopping.start()
+        text = (
+            f"Flat Searcher is OFF.\n\n{now} It will not start with the computer until "
+            "you turn it on again with the same shortcut."
+        )
+    print(text)
+    show_message("Flat Searcher", text)
+    if stopping is not None:
+        stopping.join()
+    return 0
+
+
+def _open_library_quietly(config: AppConfig) -> LibraryStore | None:
+    with contextlib.redirect_stdout(io.StringIO()):
+        return _open_library(config)
 
 
 def _parse_shard(text: str) -> tuple[int, int]:
