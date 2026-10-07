@@ -5,7 +5,7 @@ from __future__ import annotations
 import logging
 from dataclasses import dataclass
 from datetime import datetime
-from collections.abc import Mapping, Sequence
+from collections.abc import Callable, Mapping, Sequence
 from typing import Any, Protocol
 
 from flat_searcher.library import ACTIVE, LibraryStore
@@ -64,7 +64,7 @@ class TransitRun:
         self._criteria = criteria
         self._now = now
 
-    def run(self) -> TransitResult:
+    def run(self, progress: Callable[[int, int], None] | None = None) -> TransitResult:
         index = AddressIndex(self._sources.register())
         points: dict[str, tuple[float, float]] = {}
         definitions: dict[str, dict[str, Any]] = {}
@@ -109,9 +109,14 @@ class TransitRun:
         shapes_used: set[str] = set()
         stops_used: set[str] = set()
         options_at: dict[tuple[float, float], dict[str, list[dict[str, Any]]]] = {}
-        for ss_id, record in self._store.load_listings().items():
-            if record.get("status") != ACTIVE:
-                continue
+        active = [
+            (ss_id, record)
+            for ss_id, record in self._store.load_listings().items()
+            if record.get("status") == ACTIVE
+        ]
+        for done, (ss_id, record) in enumerate(active, start=1):
+            if progress is not None:
+                progress(done, len(active))
             core = record.get("core") or {}
             location = index.locate(str(core.get("street") or ""), core.get("house_number"))
             if location is None:

@@ -3,7 +3,7 @@ import tempfile
 from unittest import TestCase
 from unittest.mock import patch
 
-from flat_searcher.indexing import IndexerOptions, IndexerRun
+from flat_searcher.indexing import IndexerOptions, IndexerRun, merge_verdicts
 from flat_searcher.library import LocalLibraryStore
 from flat_searcher.scraper.http_client import FetchError, FetchResult
 
@@ -297,6 +297,51 @@ class IndexerRunTests(TestCase):
             self.assertFalse(result.ok)
             self.assertNotIn("secret.host", "\n".join(logs.output))
             self.assertNotIn("secret.host", json.dumps(result.meta))
+
+
+class Halt(BaseException):
+    pass
+
+
+class IndexerProgressTests(TestCase):
+    def test_crawl_progress_reaches_the_caller(self) -> None:
+        with tempfile.TemporaryDirectory() as temp_dir:
+            store = LocalLibraryStore(temp_dir)
+            events: list[tuple[str, int, int]] = []
+            IndexerRun(
+                store,
+                IndexerOptions(start_url=START_URL, request_delay_seconds=0.0),
+                FakeHttpClient(_site({"1001": {"price": 100_000}, "1002": {"price": 90_000}})),
+            ).run(progress=lambda phase, done, total: events.append((phase, done, total)))
+            self.assertEqual(events[-2:], [("listings", 1, 2), ("listings", 2, 2)])
+
+    def test_a_stop_raised_from_progress_leaves_the_library_and_meta_untouched(self) -> None:
+        with tempfile.TemporaryDirectory() as temp_dir:
+            store = LocalLibraryStore(temp_dir)
+            pages = _site({"1001": {"price": 100_000}})
+            _run(store, pages)
+            meta = store.load_meta()
+
+            def halt(phase: str, done: int, total: int) -> None:
+                raise Halt
+
+            with self.assertRaises(Halt):
+                IndexerRun(
+                    store, IndexerOptions(start_url=START_URL, request_delay_seconds=0.0), FakeHttpClient(pages)
+                ).run(progress=halt)
+            self.assertEqual(store.load_meta(), meta)
+
+    def test_merge_verdicts_folds_days_oldest_first_up_to_a_day(self) -> None:
+        with tempfile.TemporaryDirectory() as temp_dir:
+            store = LocalLibraryStore(temp_dir)
+            store.append_verdicts("2026-10-01", [{"ss_id": "a", "score": 10}, {"ss_id": "gone", "score": 1}])
+            store.append_verdicts("2026-10-05", [{"ss_id": "a", "score": 20}])
+            records = {"a": {"ss_id": "a"}}
+
+            counts = merge_verdicts(store, records, "2026-10-04")
+            self.assertEqual((counts, records["a"]["judgment"]["score"]), ({"days": 1, "merged": 1, "unknown": 1}, 10))
+            merge_verdicts(store, records)
+            self.assertEqual(records["a"]["judgment"]["score"], 20)
 
 
 def _judge(store: LocalLibraryStore, ss_id: str, score: int = 50) -> None:

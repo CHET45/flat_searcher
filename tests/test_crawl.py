@@ -1,3 +1,5 @@
+import threading
+import time
 from unittest import TestCase
 
 from flat_searcher.scraper.crawl import SSCrawler
@@ -148,6 +150,69 @@ class CrawlFailureTests(TestCase):
 
         with self.assertRaises(FetchError):
             crawler.crawl()
+
+
+class SlowHttpClient(FakeHttpClient):
+    def __init__(self, pages: dict[str, str]) -> None:
+        super().__init__(pages)
+        self._lock = threading.Lock()
+
+    def fetch_text(self, url: str) -> FetchResult:
+        time.sleep(0.02)
+        with self._lock:
+            return super().fetch_text(url)
+
+
+class Halt(BaseException):
+    pass
+
+
+class CrawlProgressTests(TestCase):
+    def test_progress_counts_list_pages_then_listings(self) -> None:
+        nav = "".join(
+            f'<a name="nav_id" class="navi" href="/lv/real-estate/flats/riga/all/sell/page{n}.html">{n}</a>'
+            for n in range(2, 5)
+        )
+        pages = {
+            START_URL: _list_page_many(0, 2).replace("</table>", f"</table><div>{nav}</div>"),
+            **{
+                f"https://www.ss.com/lv/real-estate/flats/riga/all/sell/page{n}.html": _list_page_many(n * 10, 1)
+                for n in range(2, 5)
+            },
+            **{f"https://www.ss.com/msg/lv/{i}.html": _detail_page("Flat.") for i in (0, 1, 20, 30, 40)},
+        }
+        events: list[tuple[str, int, int]] = []
+
+        result = SSCrawler(START_URL, FakeHttpClient(pages), list_fetch_workers=2, detail_fetch_workers=2).crawl(
+            progress=lambda phase, done, total: events.append((phase, done, total))
+        )
+
+        self.assertTrue(result.complete)
+        self.assertEqual(
+            [event for event in events if event[0] == "list pages"],
+            [("list pages", 1, 4), ("list pages", 2, 4), ("list pages", 3, 4), ("list pages", 4, 4)],
+        )
+        self.assertEqual(
+            [event for event in events if event[0] == "listings"], [("listings", n, 5) for n in range(1, 6)]
+        )
+
+    def test_a_raising_progress_ends_the_crawl_without_fetching_the_rest(self) -> None:
+        pages = {
+            START_URL: _list_page_many(0, 29),
+            **{f"https://www.ss.com/msg/lv/{i}.html": _detail_page("Flat.") for i in range(29)},
+        }
+        client = SlowHttpClient(pages)
+
+        def progress(phase: str, done: int, total: int) -> None:
+            if phase == "listings" and done == 2:
+                raise Halt
+
+        with self.assertRaises(Halt):
+            SSCrawler(START_URL, client, detail_fetch_workers=2).crawl(progress=progress)
+        time.sleep(0.1)
+
+        details = [url for url in client.requested_urls if "/msg/" in url]
+        self.assertLess(len(details), 10)
 
 
 def _list_page(

@@ -50,6 +50,26 @@ class OllamaJudgeClient:
         except (OSError, HTTPError, URLError):
             return False
 
+    def loaded_vram_mib(self) -> int:
+        try:
+            with urlopen(f"{self.base_url}/api/ps", timeout=3.0) as response:
+                models = json.loads(response.read().decode("utf-8")).get("models") or []
+        except (OSError, HTTPError, URLError, ValueError):
+            return 0
+        return sum(int(model.get("size_vram") or 0) for model in models) // (1024 * 1024)
+
+    def unload(self) -> None:
+        request = Request(
+            f"{self.base_url}/api/generate",
+            data=json.dumps({"model": self.model, "keep_alive": 0}).encode("utf-8"),
+            headers={"Content-Type": "application/json"},
+        )
+        try:
+            with urlopen(request, timeout=30.0):
+                pass
+        except (OSError, HTTPError, URLError):
+            pass
+
     def ask(
         self,
         system: str,

@@ -4,8 +4,8 @@ from __future__ import annotations
 
 import logging
 from collections import OrderedDict
-from collections.abc import Iterator, Sequence
-from concurrent.futures import ThreadPoolExecutor, as_completed
+from collections.abc import Callable, Iterator, Sequence
+from concurrent.futures import Future, ThreadPoolExecutor, as_completed
 from dataclasses import dataclass
 from typing import Protocol
 from urllib.parse import urljoin
@@ -22,7 +22,12 @@ from flat_searcher.scraper.ss import (
 MAX_LIST_PAGES = 500
 FULL_LIST_PAGE_ROWS = 30
 
+LIST_PAGES = "list pages"
+LISTINGS = "listings"
+
 logger = logging.getLogger(__name__)
+
+CrawlProgress = Callable[[str, int, int], None]
 
 
 class TextFetcher(Protocol):
@@ -79,12 +84,17 @@ class SSCrawler:
         self.list_parser = SSListParser()
         self.detail_parser = SSDetailParser()
 
-    def crawl(self, limit: int | None = None) -> CrawlResult:
-        discovery = self._discover_summaries(limit)
+    def crawl(self, limit: int | None = None, progress: CrawlProgress | None = None) -> CrawlResult:
+        """`progress(phase, done, total)` runs on the calling thread; whatever it raises
+        ends the crawl at once, with pending requests cancelled."""
+        report = progress or _ignore_progress
+        discovery = self._discover_summaries(limit, report)
         details_by_ss_id: dict[str, ListingDetail] = {}
         failed_detail_count = 0
 
-        for summary, detail in self._iter_details(discovery.summaries):
+        total = len(discovery.summaries)
+        for done, (summary, detail) in enumerate(self._iter_details(discovery.summaries), start=1):
+            report(LISTINGS, done, total)
             if detail is None:
                 failed_detail_count += 1
                 continue
@@ -115,7 +125,7 @@ class SSCrawler:
         )
         return result
 
-    def _discover_summaries(self, limit: int | None) -> _Discovery:
+    def _discover_summaries(self, limit: int | None, report: CrawlProgress) -> _Discovery:
         summaries_by_ss_id: OrderedDict[str, ListingSummary] = OrderedDict()
         visited_pages: set[str] = set()
         next_url: str | None = self.start_url
@@ -154,10 +164,12 @@ class SSCrawler:
                 summaries_by_ss_id.setdefault(summary.ss_id, summary)
 
             total_pages = self.list_parser.max_navigation_page(list_page.text, list_page.url)
+            report(LIST_PAGES, page_count, max(page_count, min(total_pages, MAX_LIST_PAGES)))
             if limit is None and self.list_fetch_workers > 1 and total_pages > page_count:
                 remaining_pages = range(page_count + 1, min(total_pages, MAX_LIST_PAGES) + 1)
                 fetched, failed = self._fetch_list_pages_concurrently(
-                    [(page, _list_page_url(list_page.url, page)) for page in remaining_pages]
+                    [(page, _list_page_url(list_page.url, page)) for page in remaining_pages],
+                    lambda done: report(LIST_PAGES, page_count + done, page_count + len(remaining_pages)),
                 )
                 failed_page_count += failed
                 for page in sorted(fetched):
@@ -185,20 +197,19 @@ class SSCrawler:
     def _fetch_list_pages_concurrently(
         self,
         page_urls: Sequence[tuple[int, str]],
+        report: Callable[[int], None],
     ) -> tuple[dict[int, list[ListingSummary]], int]:
         fetched: dict[int, list[ListingSummary]] = {}
         failed_page_count = 0
-        with ThreadPoolExecutor(max_workers=self.list_fetch_workers) as executor:
-            futures = {
-                executor.submit(self._fetch_list_page, url): page_number
-                for page_number, url in page_urls
-            }
-            for future in as_completed(futures):
-                summaries = future.result()
-                if summaries is None:
-                    failed_page_count += 1
-                    continue
-                fetched[futures[future]] = summaries
+        pages = {url: page_number for page_number, url in page_urls}
+        for done, (url, summaries) in enumerate(
+            _completed(self._fetch_list_page, list(pages), self.list_fetch_workers), start=1
+        ):
+            report(done)
+            if summaries is None:
+                failed_page_count += 1
+                continue
+            fetched[pages[url]] = summaries
         return fetched, failed_page_count
 
     def _fetch_list_page(self, url: str) -> list[ListingSummary] | None:
@@ -217,13 +228,7 @@ class SSCrawler:
             for summary in summaries:
                 yield summary, self._fetch_detail(summary)
             return
-
-        with ThreadPoolExecutor(max_workers=self.detail_fetch_workers) as executor:
-            futures = {
-                executor.submit(self._fetch_detail, summary): summary for summary in summaries
-            }
-            for future in as_completed(futures):
-                yield futures[future], future.result()
+        yield from _completed(self._fetch_detail, summaries, self.detail_fetch_workers)
 
     def _fetch_detail(self, summary: ListingSummary) -> ListingDetail | None:
         try:
@@ -232,6 +237,24 @@ class SSCrawler:
             logger.warning("crawl detail fetch failed: ss_id=%s: %s", summary.ss_id, error)
             return None
         return self.detail_parser.parse(detail_page.text)
+
+
+def _completed[T, R](
+    work: Callable[[T], R], items: Sequence[T], workers: int
+) -> Iterator[tuple[T, R]]:
+    # Not `with ThreadPoolExecutor`: its exit waits for every queued request, so a
+    # consumer that stops early would sit through the whole crawl first.
+    executor = ThreadPoolExecutor(max_workers=workers)
+    try:
+        futures: dict[Future[R], T] = {executor.submit(work, item): item for item in items}
+        for future in as_completed(futures):
+            yield futures[future], future.result()
+    finally:
+        executor.shutdown(wait=False, cancel_futures=True)
+
+
+def _ignore_progress(phase: str, done: int, total: int) -> None:
+    pass
 
 
 def _list_page_url(base_url: str, page_number: int) -> str:

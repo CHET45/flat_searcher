@@ -415,6 +415,15 @@ class TransitRunTests(TestCase):
                 (1, 1, 1, 2, 1, 2),
             )
 
+    def test_progress_counts_the_active_listings(self) -> None:
+        with tempfile.TemporaryDirectory() as temp_dir:
+            store = self._store(temp_dir)
+            seen: list[tuple[int, int]] = []
+            TransitRun(store, FakeSources(), parse_criteria(CRITERIA), NOW).run(
+                lambda done, total: seen.append((done, total))
+            )
+            self.assertEqual(seen, [(1, 3), (2, 3), (3, 3)])
+
     def test_the_map_file_carries_shapes_stops_and_streets(self) -> None:
         with tempfile.TemporaryDirectory() as temp_dir:
             store = self._store(temp_dir)

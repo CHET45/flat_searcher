@@ -20,7 +20,7 @@ from flat_searcher.library.records import (
     merge_judgment,
 )
 from flat_searcher.library.store import LibraryStore
-from flat_searcher.scraper.crawl import CrawlResult, SSCrawler, TextFetcher
+from flat_searcher.scraper.crawl import CrawlProgress, CrawlResult, SSCrawler, TextFetcher
 from flat_searcher.scraper.http_client import HttpTextClient
 
 LIST_FETCH_WORKERS = 4
@@ -83,8 +83,10 @@ class IndexerRun:
         self.http_client = http_client or HttpTextClient(
             request_delay_seconds=options.request_delay_seconds
         )
+        self._progress: CrawlProgress | None = None
 
-    def run(self) -> IndexerResult:
+    def run(self, progress: CrawlProgress | None = None) -> IndexerResult:
+        self._progress = progress
         now = _now()
         state = _RunState(now=now, run_date=now[:10])
         stages: list[StageOutcome] = []
@@ -135,7 +137,7 @@ class IndexerRun:
             list_fetch_workers=LIST_FETCH_WORKERS,
             detail_fetch_workers=DETAIL_FETCH_WORKERS,
         )
-        state.crawl = crawler.crawl(limit=self.options.limit)
+        state.crawl = crawler.crawl(limit=self.options.limit, progress=self._progress)
         return {
             "pages": state.crawl.page_count,
             "seen": state.crawl.seen_count,
@@ -220,19 +222,7 @@ class IndexerRun:
         return {"priced": priced, "districts": len(districts)}
 
     def _merge_verdicts(self, state: _RunState) -> dict[str, int]:
-        days = [day for day in self.store.verdict_days() if day <= state.run_date]
-        merged = 0
-        unknown = 0
-        for day in days:
-            for verdict in self.store.read_verdicts(day):
-                ss_id = str(verdict.get("ss_id") or "")
-                record = state.records.get(ss_id)
-                if record is None:
-                    unknown += 1
-                    continue
-                state.records[ss_id] = merge_judgment(record, verdict)
-                merged += 1
-        return {"days": len(days), "merged": merged, "unknown": unknown}
+        return merge_verdicts(self.store, state.records, state.run_date)
 
     def _queue(self, state: _RunState) -> dict[str, int]:
         # Decided after verdicts are merged, so a judged listing whose price moved
@@ -289,6 +279,25 @@ class IndexerRun:
         if entries:
             self.store.write_queue(state.run_date, [entries[ss_id] for ss_id in sorted(entries)])
         return counts
+
+
+def merge_verdicts(
+    store: LibraryStore, records: dict[str, Record], until_day: str | None = None
+) -> dict[str, int]:
+    """Folds every verdict day up to `until_day` into `records`, oldest first, so the newest wins."""
+    days = [day for day in store.verdict_days() if until_day is None or day <= until_day]
+    merged = 0
+    unknown = 0
+    for day in days:
+        for verdict in store.read_verdicts(day):
+            ss_id = str(verdict.get("ss_id") or "")
+            record = records.get(ss_id)
+            if record is None:
+                unknown += 1
+                continue
+            records[ss_id] = merge_judgment(record, verdict)
+            merged += 1
+    return {"days": len(days), "merged": merged, "unknown": unknown}
 
 
 def _build_meta(
