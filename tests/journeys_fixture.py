@@ -104,5 +104,5 @@ def build_feed() -> bytes:
     buffer = io.BytesIO()
     with zipfile.ZipFile(buffer, "w") as archive:
         for name, text in files.items():
-            archive.writestr(name, text.encode("utf-8"))
+            archive.writestr(zipfile.ZipInfo(name, (2026, 1, 1, 0, 0, 0)), text.encode("utf-8"))
     return buffer.getvalue()
