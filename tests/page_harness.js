@@ -3,7 +3,7 @@
 // every external script (Leaflet, map.js) fails to load. Prints what the list shows.
 // Timers and animation frames run on a virtual clock that only a "wait" action moves, in due order,
 // so timing races in the page are the same on every run and every platform.
-// Usage: node page_harness.js <index.html> '<actions JSON>' '<localStorage JSON>' [now ISO]
+// Usage: node page_harness.js <index.html> '<actions JSON>' '<localStorage JSON>' [now ISO] [#hash]
 const fs = require("fs");
 
 const html = fs.readFileSync(process.argv[2], "utf8");
@@ -16,6 +16,7 @@ const staticIds = new Set(["data", ...[...markup.matchAll(/ id="([^"]+)"/g)].map
 const loaded = [];
 const layout = {};
 const scrolled = [];
+const intoView = [];
 const windowListeners = {};
 if (process.argv[5]) Date.now = () => Date.parse(process.argv[5]);
 
@@ -55,7 +56,7 @@ class Element {
     if (child.src) { loaded.push(child.src); setTimeout(() => child.onerror && child.onerror(new Error("offline")), 0); }
     return child;
   }
-  scrollIntoView() {}
+  scrollIntoView() { intoView.push(this.id); }
   getBoundingClientRect() { return layout[this.id] || { top: 0, bottom: 0 }; }
 }
 
@@ -80,6 +81,7 @@ global.localStorage = {
 global.matchMedia = () => ({ matches: false, addEventListener() {} });
 global.getComputedStyle = () => ({ getPropertyValue: () => "#123456" });
 global.scrollTo = () => {};
+global.location = { href: "https://example.test/flats/" + (process.argv[6] || ""), hash: process.argv[6] || "" };
 global.innerWidth = 375;
 global.scrollBy = (x, y) => scrolled.push([x, y]);
 let clock = 0;
@@ -124,6 +126,14 @@ const target = (action) => ({
       global.innerWidth = action.width;
     } else if (action.layout) {
       Object.assign(layout, action.layout);
+    } else if (action.hash !== undefined) {
+      location.hash = action.hash;
+      location.href = "https://example.test/flats/" + action.hash;
+      for (const listener of windowListeners.hashchange || []) listener({});
+    } else if (action.input) {
+      const element = document.getElementById(action.input);
+      element.value = action.value;
+      for (const listener of element.listeners.input || []) listener({});
     } else if (action.event) {
       for (const listener of windowListeners[action.event] || []) listener({});
     } else if (action.wait) {
@@ -141,6 +151,7 @@ const target = (action) => ({
   const listed = document.getElementById("list").innerHTML + (document.getElementById("grid") || { html: "" }).html;
   const note = document.getElementById("map-note");
   const stale = document.getElementById("stale");
+  const toast = document.getElementById("toast");
   process.stdout.write(JSON.stringify({
     cards: [...listed.matchAll(/<article class="[^"]*" id="c-([^"]+)"/g)].map((m) => m[1]),
     list: listed,
@@ -150,6 +161,9 @@ const target = (action) => ({
     mapNote: note.hidden ? null : note.textContent,
     stale: stale.hidden ? null : stale.textContent,
     scrolled,
+    intoView,
+    toast: toast.hidden ? null : document.getElementById("toast-text").textContent || null,
+    undo: !document.getElementById("toast-undo").hidden,
     loaded,
     storage: Object.fromEntries(storage),
   }));

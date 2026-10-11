@@ -235,6 +235,10 @@ exclude = [1]                  # floors that never pass; default: none
 [surroundings]
 gym_max_min = 15               # no gym this close on foot or by transit sorts a flat lower; default: off
 
+[[surroundings.gyms]]          # optional: only these count as gyms, instead of every gym in OpenStreetMap
+name = "Chain Centre"
+address = "Brīvības iela 1"    # located through the address register; or lat and lon, as for targets
+
 [transit]
 walk_m = 500                   # stops this close to the flat and to a target count
 transfer_walk_m = 300          # default; longest walk between two stops at a transfer
@@ -285,10 +289,12 @@ landfill, sewage plant, cemetery, bog (no reed beds), railway yard. Per listing:
 groceries, gyms and mall on foot (up to 30 min), the nearest groceries, DIY stores, malls and
 gym by car, the nearest gym by public transport (one more backward RAPTOR target made of every
 gym: each stop near a gym leads on foot to the closest one, so the first gym reached wins; same
-window), the car time and distance to and from each target (≈, no traffic), what lies on the
-way by car (detour ≤ 3 min for groceries and malls, ≤ 5 min for DIY, there and back) and on foot (a
-grocery within 100 m of the walk to the first stop of the best option), and the straight-line
-distance to the nearest area of each kind (0 inside). `transit` prints `surroundings=N`; a
+window). With `[[surroundings.gyms]]` set, those places replace OpenStreetMap's gyms on foot, by
+car and by transit; one the register cannot find is left out and counted in a warning. Also:
+the car time and distance to and from each target (≈, no traffic), what lies on the way by car
+(detour ≤ 3 min for groceries and malls, ≤ 5 min for DIY, there and back) and on foot (a grocery
+within 100 m of the walk to the first stop of the best option), and the straight-line distance
+to the nearest area of each kind (0 inside). `transit` prints `surroundings=N`; a
 failed download leaves them out.
 
 **Walking** follows OpenStreetMap: every `highway` way except motorways, trunks and the
@@ -354,16 +360,25 @@ without either) and `photos/<ss_id>.jpg` (thumbnails, `.t.jpg`, ~5 KB, cached un
   grocery and to the nearest gym on foot or by transit (each capped at 30 min), then flats
   beaten only by those,
   up to `size`. **All** shows every candidate in the digest's order.
-- A card shows, per target, the option with the shortest expected time (minutes + every/2) on
-  one line: route chips, minutes, every N, changes, walk. Alerts come first, under the address.
-  The card adds price history, company or private ad, land owned, the local model's condition
-  when a verdict exists, a heating and hot-water line, a building line (year, floors, wear and
-  its survey year), and under "What the listing says" the sentences behind every fact plus
-  SS.com's own values (price, area, rooms, floor, series, type, street). Each target line
-  adds the car time there and back; "On foot", "Gym" (on foot, by transit with its routes and
-  headway, by car), "By car", "On the way to …" and "Around" lines follow. Sorts include the
+- A card reads top to bottom: price, rooms, area, floor, address, €/m² against the district;
+  alerts; **The flat and the house** (rooms isolated or walk-through, house series, type, year
+  and floors, wear with its survey year, heating, hot water, land, a legalised replanning, the
+  local model's condition, seller, price history) — a fact the ad does not state says "not
+  mentioned in the ad", and hovering a fact shows the sentence it came from; **Getting to work**
+  (per target the option with the shortest expected time, minutes + every/2: route chips,
+  minutes, every N min, direct or changes, walk; then the car time there and back); **Nearby**
+  (grocery on foot and the shop on the walk to a stop, gym on foot, by transit and by car, mall,
+  nuisances around); and, folded, **Shops by car**: the nearest DIY store and mall by car and the
+  shops on the drive to and from each target with the minutes each adds. Sorts include the
   nearest grocery on foot and the nearest gym on foot or by transit. The focus view marks only
   the nearest objects of each kind and the nearest point of each nearby area.
+- **Search** above the list narrows it with every keystroke: words of the street, house number
+  or district (or an ad number), accents and case ignored, "iela" skipped; it looks through every
+  flat on the page, Today and the filters aside, exact words first.
+- **Share** on a card gives a short link, the page address plus `#<ad number>` (the phone's share
+  sheet on a touch screen, the clipboard otherwise). Opening it shows the list scrolled to that
+  flat, outlined, even if Today or the filters would leave it out; a flat no longer on the page
+  says so.
 - A page whose data is older than a day says so at the top. Turning the phone keeps the card
   that was at the top of the screen in place.
 - ★ favourite, ✕ hide and "opened" (set on opening the ad or its map) are stored in the

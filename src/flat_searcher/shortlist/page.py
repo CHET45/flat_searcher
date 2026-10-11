@@ -8,7 +8,7 @@ from dataclasses import asdict, dataclass
 from importlib import resources
 from typing import Any
 
-from flat_searcher.shortlist.criteria import Criteria, TodayRules
+from flat_searcher.shortlist.criteria import Criteria
 from flat_searcher.shortlist.alerts import AROUND_WORDS, alerts_for, distance_label
 from flat_searcher.shortlist.digest import Selection, band_label, section_label
 from flat_searcher.shortlist.facts import Fact
@@ -24,7 +24,6 @@ PHOTO_DIR = "photos"
 SORT_METRICS = {"time": "expected", "transfers": "transfers", "every": "every_min", "walk": "walk_m"}
 ALL_TARGETS = "*"
 CATEGORY_WORDS = {"grocery": "grocery", "gym": "gym", "mall": "mall", "diy": "DIY"}
-SOURCE_FIELDS = ("Cena", "Platība", "Istabas", "Stāvs", "Sērija", "Mājas tips", "Iela")
 
 
 @dataclass(frozen=True)
@@ -68,8 +67,6 @@ def render_page(
     stops = transit_map.get("stops") or {}
     data = {
         "day": day,
-        "previousDay": selection.previous_day,
-        "counts": {**asdict(selection.counts), "flats": len(groups)},
         "targetNames": names,
         "targets": [
             {"name": name, "lat": targets[name]["lat"], "lon": targets[name]["lon"]}
@@ -78,7 +75,7 @@ def render_page(
         ],
         "bands": [band_label(criteria, index) for index in range(len(criteria.bands))],
         "rooms": list(criteria.room_order),
-        "today": {"size": criteria.today.size, "rules": today_rules(criteria.today)},
+        "maxTransfers": criteria.max_transfers,
         "cards": cards,
         "stops": {stop: stops[stop] for stop in sorted(_card_stops(cards)) if stop in stops},
         "transit": _transit_meta(selection.transit),
@@ -98,22 +95,6 @@ def render_page(
         photo_ids=tuple(photo_ids),
         flats=len(groups),
     )
-
-
-def today_rules(rules: TodayRules) -> list[str]:
-    words = []
-    if rules.exclude_walkthrough:
-        words.append("no walk-through room")
-    if rules.exclude_leased_land:
-        words.append("land not leased")
-    if rules.exclude_illegal_replanning:
-        words.append("no replanning the seller calls not legalised")
-    words.append("no implausible price, not room-sized")
-    if rules.max_minutes is not None:
-        words.append(f"at most {rules.max_minutes} min to all targets together, waits included")
-    else:
-        words.append("a way to every target")
-    return words
 
 
 def _json(data: Mapping[str, Any]) -> str:
@@ -178,7 +159,6 @@ def _card(
         "heating": _fact(item.heating),
         "hotWater": _fact(item.hot_water),
         "replanning": _fact(item.replanning),
-        "source": {key: fields[key] for key in SOURCE_FIELDS if fields.get(key)},
         "building": dict(item.building),
         "drive": dict((item.surroundings.get("drive") or {}).get("targets") or {}),
         "nearby": _nearby(item.surroundings),

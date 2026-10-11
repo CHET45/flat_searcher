@@ -107,8 +107,6 @@ body { background: var(--ground); color: var(--ink); font: 15px/1.45 var(--body)
 .title-row { display: flex; flex-wrap: wrap; align-items: baseline; justify-content: space-between; gap: 8px 16px; }
 h1 { margin: 0; font: 700 24px/1.1 var(--display); letter-spacing: 0.01em; text-wrap: balance; }
 h1 span { color: var(--muted); font-weight: 500; }
-.summary { margin: 0; color: var(--muted); font-variant-numeric: tabular-nums; }
-.summary b { color: var(--ink); font-weight: 600; }
 .tabs { display: inline-flex; border: 1px solid var(--line); border-radius: 8px; overflow: hidden; }
 .tabs button {
   font: 600 14px var(--body); padding: 6px 14px; border: 0; background: var(--surface);
@@ -130,26 +128,27 @@ button:focus-visible, select:focus-visible, input:focus-visible, a:focus-visible
   outline: 2px solid var(--accent); outline-offset: 2px;
 }
 main.wrap { padding-block: 12px 48px; }
-details.rejected { color: var(--muted); font-size: 14px; }
-details.rejected summary { cursor: pointer; }
 .section { margin-block: 14px 8px; }
 .section h2 { margin: 0; font: 600 19px/1.2 var(--display); }
 .section h2 .n { color: var(--muted); font-weight: 500; font-variant-numeric: tabular-nums; }
-.grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(min(100%, 360px), 1fr)); gap: 12px; }
+.section p { margin: 4px 0 0; color: var(--muted); font-size: 14px; }
+.grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(min(100%, 380px), 1fr)); gap: 12px; }
 .more-cards { height: 1px; }
 .card {
   background: var(--surface); border: 1px solid var(--line); border-radius: 10px;
-  padding: 12px; display: grid; grid-template-columns: 96px 1fr; gap: 8px 12px; align-content: start;
+  padding: 12px; display: flex; flex-direction: column; gap: 10px; min-width: 0;
 }
 .card.fav { border-color: var(--fav); box-shadow: inset 0 0 0 1px var(--fav); }
 .card.flash { outline: 3px solid var(--mark); outline-offset: 2px; }
+.card.shared { outline: 3px solid var(--accent); outline-offset: 3px; box-shadow: 0 0 0 7px color-mix(in srgb, var(--accent) 18%, transparent); }
+.card-top { display: grid; grid-template-columns: 104px 1fr; gap: 12px; align-items: start; }
 .photo {
-  width: 96px; max-width: 100%; aspect-ratio: 4 / 3; object-fit: cover; border-radius: 6px;
+  width: 104px; max-width: 100%; aspect-ratio: 4 / 3; object-fit: cover; border-radius: 6px;
   background: var(--line); display: grid; place-items: center; color: var(--muted); font-size: 12px;
 }
-.head { display: flex; flex-direction: column; gap: 1px; min-width: 0; }
+.head { display: flex; flex-direction: column; gap: 2px; min-width: 0; }
 .price-row { display: flex; align-items: center; gap: 8px; }
-.price { font: 700 23px/1 var(--display); font-variant-numeric: tabular-nums; }
+.price { font: 700 24px/1 var(--display); font-variant-numeric: tabular-nums; }
 .marks { color: var(--mark); font-weight: 700; font-size: 13px; letter-spacing: 0.02em; }
 .actions { margin-left: auto; display: inline-flex; gap: 4px; }
 .mark-btn {
@@ -158,32 +157,38 @@ details.rejected summary { cursor: pointer; }
 }
 .mark-btn[data-act="fav"][aria-pressed="true"] { color: var(--fav); border-color: var(--fav); }
 .mark-btn[data-act="hide"][aria-pressed="true"] { color: var(--bad); border-color: var(--bad); }
-.spec { color: var(--muted); font-variant-numeric: tabular-nums; font-size: 14px; }
+.spec { font-variant-numeric: tabular-nums; font-size: 15px; }
 .addr { font-weight: 600; overflow-wrap: anywhere; }
 .addr .district, .addr .seen { color: var(--muted); font-weight: 400; }
-.facts { grid-column: 1 / -1; display: flex; flex-wrap: wrap; gap: 5px; font-size: 13px; }
-.pill { border: 1px solid var(--line); border-radius: 999px; padding: 0 8px; color: var(--muted); }
-.pill.good { color: var(--good); border-color: currentColor; }
-.pill.bad { color: var(--bad); border-color: currentColor; }
-.alerts { grid-column: 1 / -1; display: flex; flex-wrap: wrap; gap: 5px; font-size: 13px; font-weight: 600; }
+.per-m2 { color: var(--muted); font-size: 13px; font-variant-numeric: tabular-nums; }
+.per-m2 b { font-weight: 600; }
+.good { color: var(--good); }
+.bad { color: var(--bad); }
+.alerts { display: flex; flex-wrap: wrap; gap: 5px; font-size: 13px; font-weight: 600; }
 .alert { border: 1.5px solid currentColor; border-radius: 6px; padding: 0 7px; }
 .alert.red { color: var(--bad); background: color-mix(in srgb, var(--bad) 12%, transparent); }
 .alert.amber { color: var(--mark); background: color-mix(in srgb, var(--mark) 10%, transparent); }
-.utility { grid-column: 1 / -1; margin: 0; font-size: 13px; color: var(--muted); }
-.utility b { color: var(--ink); font-weight: 600; }
 .stale { margin: 0 0 8px; padding: 6px 10px; border: 1.5px solid var(--bad); border-radius: 8px; color: var(--bad); font-weight: 600; }
-.history { grid-column: 1 / -1; margin: 0; font-size: 13px; color: var(--muted); font-variant-numeric: tabular-nums; }
-.history b { color: var(--good); font-weight: 600; }
-.history b.up { color: var(--bad); }
-.routes { grid-column: 1 / -1; display: grid; grid-template-columns: max-content 1fr; gap: 4px 10px; font-size: 13px; margin: 0; }
-.routes dt { color: var(--muted); padding-top: 1px; white-space: nowrap; }
-.routes dd { margin: 0; min-width: 0; }
+.block { border-top: 1px solid var(--line); padding-top: 8px; }
+.block h3, details.block > summary {
+  margin: 0 0 4px; font: 600 13px/1.3 var(--body); letter-spacing: 0.05em; text-transform: uppercase; color: var(--muted);
+}
+.block h3 small { font-size: inherit; font-weight: 400; letter-spacing: 0; text-transform: none; }
+details.block > summary { cursor: pointer; margin: 0; }
+details.block[open] > summary { margin-bottom: 4px; }
+.block .sub { margin: 6px 0 2px; font-size: 13px; font-weight: 600; }
+.rows { display: grid; grid-template-columns: minmax(76px, max-content) 1fr; gap: 3px 12px; margin: 0; font-size: 14px; }
+.rows dt { color: var(--muted); }
+.rows dd { margin: 0; min-width: 0; overflow-wrap: anywhere; }
+.rows dd > .line { display: block; }
+.unknown { color: var(--muted); font-style: italic; }
+.hint { color: var(--muted); font-size: 13px; }
 .journey { display: flex; flex-wrap: wrap; align-items: center; gap: 2px 6px; }
-.car { display: block; font-size: 12px; color: var(--muted); }
 .journey .legs { display: inline-flex; flex-wrap: wrap; align-items: center; gap: 3px; }
 .journey .arrow { color: var(--muted); }
-.journey .time { font: 600 14px var(--display); font-variant-numeric: tabular-nums; white-space: nowrap; }
-.journey .meta { color: var(--muted); font-variant-numeric: tabular-nums; }
+.journey .time { font: 600 15px var(--display); font-variant-numeric: tabular-nums; white-space: nowrap; }
+.journey .meta { color: var(--muted); font-size: 13px; font-variant-numeric: tabular-nums; }
+.car { display: block; font-size: 13px; color: var(--muted); }
 .chip {
   display: inline-block; min-width: 24px; text-align: center; padding: 0 4px; border-radius: 4px;
   font: 700 13px/19px var(--display); font-variant-numeric: tabular-nums;
@@ -192,13 +197,11 @@ details.rejected summary { cursor: pointer; }
 .chip.trolleybus { background: var(--trolleybus); color: var(--trolleybus-ink); }
 .chip.tram { background: var(--tram); color: var(--tram-ink); }
 .none { color: var(--muted); }
-details.why, details.ads { grid-column: 1 / -1; font-size: 13px; color: var(--muted); }
-details.why summary, details.ads summary { cursor: pointer; }
-details.why p { margin: 4px 0 0; font-style: italic; }
-details.why p.source { font-style: normal; }
+details.ads { font-size: 13px; color: var(--muted); }
+details.ads summary { cursor: pointer; }
 details.ads ul { margin: 4px 0 0; padding-left: 18px; }
 details.ads a { color: var(--accent); }
-.foot { grid-column: 1 / -1; display: flex; justify-content: flex-end; align-items: center; gap: 8px; font-size: 13px; flex-wrap: wrap; }
+.foot { display: flex; justify-content: flex-end; align-items: center; gap: 8px; font-size: 13px; flex-wrap: wrap; }
 .foot a { color: var(--accent); font-weight: 600; text-decoration: none; }
 .foot a:hover { text-decoration: underline; }
 .small-btn {
@@ -206,16 +209,18 @@ details.ads a { color: var(--accent); }
   background: var(--ground); color: var(--ink); padding: 3px 10px; cursor: pointer;
 }
 .small-btn[aria-pressed="true"] { background: var(--accent); color: var(--accent-ink); border-color: var(--accent); }
-details.how { margin-top: 4px; font-size: 14px; color: var(--muted); }
-details.how summary { cursor: pointer; }
-details.how p { margin: 6px 0 0; }
-details.how .chip { margin-right: 4px; }
+.search { flex: 1 1 220px; max-width: 360px; position: relative; }
+.search input {
+  width: 100%; box-sizing: border-box; font: 15px var(--body); color: var(--ink); background: var(--surface);
+  border: 1px solid var(--line); border-radius: 6px; padding: 5px 8px;
+}
 .empty { color: var(--muted); padding-block: 24px; }
 .toast {
   position: fixed; left: 50%; bottom: 16px; transform: translateX(-50%); z-index: 1200;
   background: var(--ink); color: var(--ground); border-radius: 8px; padding: 8px 12px;
   display: flex; gap: 12px; align-items: center; font-size: 14px; box-shadow: 0 4px 16px rgb(0 0 0 / 0.25);
 }
+.toast span { overflow-wrap: anywhere; }
 .toast button { font: 600 14px var(--body); background: none; border: 0; color: inherit; text-decoration: underline; cursor: pointer; }
 .map-bar { display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: 8px 12px; margin-bottom: 8px; }
 .map-bar h2 { margin: 0; font: 600 19px/1.2 var(--display); }
@@ -298,14 +303,16 @@ details.how .chip { margin-right: 4px; }
 @media (max-width: 480px) {
   .top { position: static; }
   h1 { font-size: 21px; }
-  .card { grid-template-columns: 80px 1fr; padding: 10px; }
-  .photo { width: 80px; }
+  .card { padding: 10px; }
+  .card-top { grid-template-columns: 84px 1fr; gap: 10px; }
+  .photo { width: 84px; }
+  .search { max-width: none; flex-basis: 100%; }
   .price { font-size: 21px; }
   .shown { margin-left: 0; }
 }
 </style>
 
-<header class="top">
+<header class="top" id="top">
   <div class="wrap">
     <div class="title-row">
       <h1>Riga flat shortlist <span id="day"></span></h1>
@@ -314,13 +321,13 @@ details.how .chip { margin-right: 4px; }
         <button type="button" id="tab-map" aria-pressed="false">Map</button>
       </div>
     </div>
-    <p class="summary" id="summary"></p>
     <p class="stale" id="stale" hidden></p>
     <div class="controls">
       <div class="tabs" role="group" aria-label="Which flats">
         <button type="button" id="view-today" aria-pressed="true"></button>
         <button type="button" id="view-all" aria-pressed="false"></button>
       </div>
+      <div class="search"><input type="search" id="f-search" placeholder="Search: street, house, district" aria-label="Search by address" autocomplete="off" spellcheck="false"></div>
       <select id="f-sort" aria-label="Sort by">
         <option value="default">Suggested order</option>
         <option value="time">Fastest (incl. average wait)</option>
@@ -358,7 +365,6 @@ details.how .chip { margin-right: 4px; }
 
 <main class="wrap">
   <section id="list-view">
-    <details class="rejected" id="rejected-box"><summary id="rejected-summary"></summary><p id="rejected"></p></details>
     <div id="list"></div>
   </section>
   <section id="map-view" hidden>
@@ -434,24 +440,11 @@ details.how .chip { margin-right: 4px; }
   const windowText = data.transit.window ? data.transit.window.replace("-", "–") : "";
   const allTargets = data.targetNames.length;
 
-  const counts = data.counts;
   $("day").textContent = data.day;
-  const since = data.previousDay ? "since " + data.previousDay : "no earlier digest";
-  $("summary").innerHTML =
-    "<b>" + counts.flats + "</b> flats (" + counts.candidates + " ads) of " + money(counts.active) + " active · " +
-    "NEW <b>" + counts.new + "</b> · ↓ <b>" + counts.price_drops + "</b> cheaper · " +
-    counts.removed + " removed, " + esc(since);
   const age = Math.floor((Date.now() - Date.parse(data.day + "T00:00:00")) / 864e5);
   $("stale").hidden = age < 1;
   $("stale").textContent = age < 1 ? "" : "Data from " + shortDay(data.day) + ", " + age +
     (age === 1 ? " day" : " days") + " old: prices and availability may have changed.";
-  const rejected = Object.entries(counts.rejected);
-  $("rejected-summary").textContent = "Rejected by the sieve: " + rejected.reduce((sum, entry) => sum + entry[1], 0);
-  $("rejected").textContent = rejected.map(([gate, n]) => gate.replace("_", " ") + " " + n).join(" · ");
-  const legend = '<p><span class="chip bus">bus</span><span class="chip trolleybus">trolleybus</span>' +
-    '<span class="chip tram">tram</span> Each target shows its fastest way, door to door on a weekday' +
-    (windowText ? " leaving " + esc(windowText) : "") + ", the first wait not counted; every N min is its rarest leg; " +
-    "→ is a change. The other ways are under On the map.</p>";
 
   const bandSelect = $("f-band");
   bandSelect.innerHTML = '<option value="all">All prices</option>' +
@@ -531,7 +524,25 @@ details.how .chip { margin-right: 4px; }
     (!state.visit || !lastVisit || changedSince(card, lastVisit)) &&
     (!state.isolated || card.layout.value === "isolated") &&
     markPasses(card);
-  const visible = (card) => (state.view === "all" || card.today != null) && passes(card);
+  const fold = (text) => String(text ?? "").normalize("NFD").replace(/[\u0300-\u036f]/g, "").toLowerCase();
+  const wordsOf = (text) => fold(text).split(/[^a-z0-9\u0400-\u04ff]+/).filter(Boolean);
+  const SEARCH_NOISE = new Set(["iela", "iel", "street", "st", "ул", "улица"]);
+  const cardWords = new Map(data.cards.map((card) => [card.id, wordsOf([card.address, card.district, ...groupIds(card)].join(" "))]));
+  let query = [];
+  const searchScore = (card) => {
+    const own = cardWords.get(card.id);
+    let score = 0;
+    for (const token of query) {
+      if (own.includes(token)) score += 2;
+      else if (own.some((word) => word.startsWith(token))) score += 1;
+      else return null;
+    }
+    return score;
+  };
+  let shared = null;
+  const visible = (card) => (card.id === shared && !query.length) || (query.length
+    ? searchScore(card) !== null
+    : (state.view === "all" || card.today != null) && passes(card));
   const activeFilters = () =>
     ["band", "rooms"].filter((key) => state[key] !== "all").length + (state.marks !== "unhidden" ? 1 : 0) +
     checks.filter(([, key]) => state[key]).length;
@@ -542,146 +553,175 @@ details.how .chip { margin-right: 4px; }
     return '<span class="chip ' + esc(mode) + '" title="' + esc(title) + '" aria-label="' + esc(title) + '">' + esc(name) + "</span>";
   }).join("");
   const legsHtml = (legs) => legs.map(legChips).join('<span class="arrow">→</span>');
-  const walkText = (metres) => "walk " + (metres >= 1000 ? (metres / 1000).toFixed(1) + " km" : metres + " m");
-  const changesText = (n) => n === 0 ? "" : n === 1 ? "1 change" : n + " changes";
+  const walkMetres = (metres) => "walk " + (metres >= 1000 ? (metres / 1000).toFixed(1) + " km" : metres + " m");
+  const changesText = (n) => n === 0 ? "direct" : n === 1 ? "1 change" : n + " changes";
   const bestHtml = (option) => option
-    ? '<div class="journey"><span class="legs">' + legsHtml(option.legs) + "</span>" +
+    ? '<span class="journey"><span class="legs">' + legsHtml(option.legs) + "</span>" +
       '<span class="time">' + option.minutes + " min</span>" +
-      '<span class="meta">' + ["every " + option.every_min, changesText(option.transfers), walkText(option.walk_m)]
-        .filter(Boolean).join(" · ") + "</span></div>"
-    : '<span class="none">no way within the transfer limit</span>';
+      '<span class="meta">' + ["every " + option.every_min + " min", changesText(option.transfers), walkMetres(option.walk_m)]
+        .join(" · ") + "</span></span>"
+    : '<span class="unknown">no public transport with at most ' + data.maxTransfers + " changes</span>";
 
-  const CONDITION = { new: "new build", renovated: "renovated", liveable: "liveable", needs_renovation: "needs renovation", unfinished: "unfinished" };
-  const pills = (card) => {
-    const out = [];
-    if (card.layout.value !== "n/a") {
-      const tone = card.layout.value === "isolated" ? "good" : card.layout.value === "walkthrough" ? "bad" : "";
-      const words = { isolated: "isolated rooms", walkthrough: "walk-through room", unknown: "layout unknown" }[card.layout.value];
-      const source = card.layout.source === "series" ? " · by series" : "";
-      out.push('<span class="pill ' + tone + '">' + words + source + "</span>");
-    }
-    if (card.ratio != null) {
-      const tone = card.ratio <= 0.9 ? "good" : card.ratio >= 1.15 ? "bad" : "";
-      out.push('<span class="pill ' + tone + '" title="price per m² against the district median">' +
-        card.ratio.toFixed(2) + "× district</span>");
-    }
-    if (card.land.value === "owned") out.push('<span class="pill good">land owned</span>');
-    if (card.replanning.value === "legal") out.push('<span class="pill" title="as the listing says">replanning legalised (seller\'s word)</span>');
-    const building = [card.series, card.type].filter(Boolean).join(" / ");
-    if (building) out.push('<span class="pill">' + esc(building) + "</span>");
-    out.push(card.company
-      ? '<span class="pill" title="' + esc(card.company) + '">company ad</span>'
-      : '<span class="pill" title="posted without a company account">private ad</span>');
-    if (card.model) {
-      const words = CONDITION[card.model.condition];
-      if (words) out.push('<span class="pill ' + (card.model.condition === "needs_renovation" || card.model.condition === "unfinished" ? "bad" : "") +
-        '" title="the local model read the text and photos">' + esc(words) + " (model)</span>");
-    }
-    return out.join("");
-  };
-
-  const HEATING = { district: "city, central", house_boiler: "the house's own boiler room", own_boiler: "own boiler",
-    heat_pump: "heat pump", electric: "electric", stove: "stove", unknown: "not stated" };
-  const HOT_WATER = { central: "central", gas: "gas", boiler: "boiler", unknown: "not stated" };
-  const alertsHtml = (card) => card.alerts.length
-    ? '<div class="alerts">' + card.alerts.map((alert) => '<span class="alert ' + alert.level + '">' +
-        (alert.level === "red" ? "⚠ " : "") + esc(alert.text) + "</span>").join("") + "</div>"
+  const row = (label, value, title) => value
+    ? "<dt>" + esc(label) + "</dt><dd" + (title ? ' title="' + esc(title) + '"' : "") + ">" + value + "</dd>"
     : "";
-  const utilityHtml = (card) => '<p class="utility">Heating: <b>' + esc(HEATING[card.heating.value] || card.heating.value) +
-    "</b> · Hot water: <b>" + esc(HOT_WATER[card.hotWater.value] || card.hotWater.value) + "</b></p>";
-  const carHtml = (drive) => drive ? '<span class="car">car ≈ ' + drive.min + " min · " + drive.km + " km, back " + drive.back_min + " min</span>" : "";
-  const CATEGORY = { grocery: "grocery", gym: "gym", mall: "mall", diy: "DIY" };
-  const AROUND = { industrial: "industrial zone", works: "factory", cemetery: "cemetery", bog: "bog", landfill: "landfill",
-    wastewater: "sewage plant", railway: "railway yard" };
-  const distanceText = (metres) => metres < 1000 ? metres + " m" : (metres / 1000).toFixed(1) + " km";
-  const placeText = (category, place) => CATEGORY[category] + (place.name ? " " + esc(place.name) : "");
-  const firstOf = (mode, nearby) => ((nearby[mode] || {}).gym || [])[0];
-  const gymParts = (nearby) => {
-    const walk = firstOf("walk", nearby), ride = firstOf("transit", nearby), car = firstOf("drive", nearby);
-    const rideFaster = ride && (!walk || ride.min + ride.every_min / 2 < walk.min);
-    return [
-      walk ? esc(walk.name) + " on foot <b>" + walk.min + " min</b>" : "none within 30 min on foot",
-      rideFaster ? esc(ride.name) + " by " + ride.routes.map((routes) => esc(routes[0])).join(" → ") +
-        " <b>" + ride.min + " min</b>, every " + ride.every_min : "",
-      car ? esc(car.name) + " by car <b>" + car.min + " min</b> · " + car.km + " km" : "",
-    ].filter(Boolean);
+  const unknown = (text) => '<span class="unknown">' + esc(text) + "</span>";
+  const NOT_IN_AD = "not mentioned in the ad";
+  const block = (title, rows) => rows ? '<section class="block"><h3>' + title + '</h3><dl class="rows">' + rows + "</dl></section>" : "";
+
+  const LAYOUT = {
+    isolated: { text: "isolated: every room has its own door", series: "isolated, as usual for this series" },
+    walkthrough: { text: "one room is walk-through, the ad says", series: "one room is walk-through, as usual for this series" },
   };
-  const surroundingsHtml = (card) => {
-    const lines = [];
-    const folded = [];
-    const nearest = (mode, categories, how) => categories
-      .map((category) => [category, ((card.nearby[mode] || {})[category] || [])[0]])
-      .filter(([, place]) => place).map(([category, place]) => placeText(category, place) + " <b>" + place.min + " min</b>" + how(place));
-    const onFoot = nearest("walk", ["grocery", "mall"], () => "");
-    const byCar = nearest("drive", ["diy", "mall"], (place) => " · " + place.km + " km");
-    if (card.nearby.walk) {
-      lines.push("On foot: " + (onFoot.length ? onFoot.join(" · ") : "no grocery or mall within 30 min"));
-      lines.push("Gym: " + gymParts(card.nearby).join(" · "));
-    }
-    if (byCar.length) folded.push("By car: " + byCar.join(" · "));
-    for (const [target, way] of Object.entries(card.onTheWay)) {
-      const parts = (way.onFoot ? ["grocery " + esc(way.onFoot) + " on foot to the stop"] : [])
-        .concat(Object.entries(way.there).map(([category, place]) => placeText(category, place) + " +" + place.plus_min + " min by car"));
-      const back = Object.entries(way.back).map(([category, place]) => placeText(category, place) + " +" + place.plus_min + " min");
-      if (parts.length || back.length) {
-        folded.push("On the way to " + esc(target) + ": " + (parts.length ? parts.join(" · ") : "—") +
-          (back.length ? "; back: " + back.join(" · ") : ""));
-      }
-    }
-    const around = Object.entries(card.around).map(([kind, near]) => (AROUND[kind] || kind) + " " + distanceText(near.m));
-    if (around.length) lines.push("Around: " + around.join(" · "));
-    return lines.map((line) => '<p class="utility">' + line + "</p>").join("") + (folded.length
-      ? '<details class="why"><summary>Shops by car and on the way</summary>' +
-        folded.map((line) => '<p class="source">' + line + "</p>").join("") + "</details>"
-      : "");
+  const layoutHtml = (layout) => {
+    if (layout.value === "n/a") return "";
+    if (layout.value === "unknown") return unknown("not known: the ad does not say");
+    const words = LAYOUT[layout.value][layout.source] || layout.value;
+    return '<span class="' + (layout.value === "isolated" ? "good" : "bad") + '">' + esc(words) + "</span>";
   };
+  const SERIES = { "Jaun.": "new building", "P. kara": "pre-war", "Renov.": "renovated pre-war", "LT proj.": "Lithuanian project",
+    "Specpr.": "special project", "Hrušč.": "Khrushchev era", "Staļina": "Stalin era", "M. ģim.": "small-family series",
+    "Čehu pr.": "Czech project", "Priv. m.": "private house" };
+  const TYPE = { "Mūra": "masonry", "Paneļu": "panel", "Ķieģeļu": "brick", "Ķieģeļu-paneļu": "brick and panel",
+    "Paneļu - ķieģeļu": "panel and brick", "Koka": "wooden", "Bloku": "block" };
+  const seriesText = (series) => SERIES[series] || (/^\d+\.$/.test(series || "") ? series.slice(0, -1) + " series" : series);
   const WEAR = { V1: "very good", V2: "good", V3: "satisfactory", V4: "unsatisfactory", V5: "critical" };
-  const buildingHtml = (building) => {
-    const surveyed = building.wear_date ? " " + esc(building.wear_date.slice(0, 4)) : ", survey date not recorded";
-    const parts = [
+  const houseHtml = (card) => {
+    const building = card.building;
+    return [
+      card.series ? esc(seriesText(card.series)) : "",
+      card.type ? esc(TYPE[card.type] || card.type) : "",
       building.built ? "built " + esc(building.built) : "",
       building.floors ? esc(building.floors) + " floors" : "",
-      building.wear ? "wear <b>" + esc(building.wear) + " " + esc(WEAR[building.wear] || "") + "</b> (VZD" + surveyed + ")" : "",
-      building.note === "new build" ? "new build, not yet in the cadastre" : esc(building.note || ""),
-    ].filter(Boolean);
-    return parts.length ? '<p class="utility">Building: ' + parts.join(" · ") + "</p>" : "";
+      building.note === "new build" ? "new, not yet in the cadastre" : esc(building.note || ""),
+    ].filter(Boolean).join(" · ");
   };
-
+  const wearHtml = (building) => {
+    if (!building.wear) return "";
+    const tone = building.wear === "V4" || building.wear === "V5" ? "bad" : building.wear === "V1" || building.wear === "V2" ? "good" : "";
+    const surveyed = building.wear_date ? "state cadastre, surveyed " + esc(building.wear_date.slice(0, 4)) : "state cadastre, survey year not recorded";
+    return '<span class="' + tone + '">' + esc(building.wear) + " · " + esc(WEAR[building.wear] || "") + '</span> <span class="hint">(' + surveyed + ")</span>";
+  };
+  const HEATING = { district: "central, from the city network", house_boiler: "the house's own boiler room", own_boiler: "own boiler in the flat",
+    heat_pump: "heat pump", electric: "electric", stove: "stove" };
+  const HOT_WATER = { central: "central", gas: "gas water heater", boiler: "own water heater (boiler)" };
+  const factHtml = (fact, words) => fact.value === "unknown" ? unknown(NOT_IN_AD) : esc(words[fact.value] || fact.value);
+  const LAND = { owned: '<span class="good">belongs to the flat owners</span>', leased: '<span class="bad">leased, the owners pay rent for it</span>' };
+  const CONDITION = { new: "new", renovated: "renovated", liveable: "liveable as it is", needs_renovation: "needs renovation", unfinished: "unfinished" };
+  const sellerHtml = (card) => card.company ? "agency: " + esc(card.company) : "private person";
   const historyHtml = (history) => {
     if (history.length < 2) return "";
-    const steps = history.map(([day, price], index) => {
+    return history.map(([day, price], index) => {
       if (index === 0) return money(price);
-      const cls = price > history[index - 1][1] ? ' class="up"' : "";
-      return "<b" + cls + ">" + money(price) + "</b> (" + shortDay(day) + ")";
-    });
-    return '<p class="history">Price ' + steps.join(" → ") + "</p>";
+      const tone = price > history[index - 1][1] ? "bad" : "good";
+      return '<b class="' + tone + '">' + money(price) + "</b> (" + shortDay(day) + ")";
+    }).join(" → ");
+  };
+  const flatBlock = (card) => block("The flat and the house",
+    row("Rooms", layoutHtml(card.layout), card.layout.quote) +
+    row("House", houseHtml(card)) +
+    row("Wear", wearHtml(card.building)) +
+    row("Heating", factHtml(card.heating, HEATING), card.heating.quote) +
+    row("Hot water", factHtml(card.hotWater, HOT_WATER), card.hotWater.quote) +
+    row("Land", LAND[card.land.value] || unknown(NOT_IN_AD), card.land.quote) +
+    row("Replanning", card.replanning.value === "legal" ? "legalised, the seller says" : "", card.replanning.quote) +
+    row("Condition", card.model && CONDITION[card.model.condition]
+      ? esc(CONDITION[card.model.condition]) + ' <span class="hint">(AI estimate from the text and photos)</span>' : "") +
+    row("Seller", sellerHtml(card)) +
+    row("Price history", historyHtml(card.history)));
+
+  const carText = (drive) => drive ? '<span class="car">by car ' + drive.min + " min, " + drive.km + " km · back " + drive.back_min + " min</span>" : "";
+  const commuteBlock = (card) => {
+    if (!Object.keys(card.best).length) {
+      return '<section class="block"><h3>Getting to work</h3>' + unknown("the address is not in the address register, so no routes") + "</section>";
+    }
+    return block("Getting to work" + (windowText ? " <small>· weekday, leaving " + esc(windowText) + "</small>" : ""),
+      data.targetNames.map((name) => row(name, bestHtml(card.best[name]) + carText(card.drive[name]))).join(""));
   };
 
+  const CATEGORY = { grocery: "Grocery", gym: "Gym", mall: "Mall", diy: "DIY store" };
+  const AROUND = { industrial: "industrial zone", works: "factory", cemetery: "cemetery", bog: "bog", landfill: "landfill",
+    wastewater: "sewage plant", railway: "railway yard" };
+  const distanceText = (metres) => metres === 0 ? "right at the house" : metres < 1000 ? metres + " m" : (metres / 1000).toFixed(1) + " km";
+  const placeName = (place) => place.name ? esc(place.name) : "unnamed";
+  const firstOf = (mode, category, card) => (((card.nearby[mode] || {})[category]) || [])[0];
+  const lines = (parts) => parts.filter(Boolean).map((part) => '<span class="line">' + part + "</span>").join("");
+  const NO_WALK = "none within a 30-minute walk";
+  const walkText = (place) => placeName(place) + " · <b>" + place.min + " min</b> on foot";
+  const routesText = (routes) => routes.map((options) => esc(options[0])).join(" → ");
+  const groceryHtml = (card) => {
+    const place = firstOf("walk", "grocery", card);
+    const stops = new Map();
+    for (const [target, way] of Object.entries(card.onTheWay)) {
+      if (way.onFoot) stops.set(way.onFoot, [...(stops.get(way.onFoot) || []), target]);
+    }
+    const toStops = [...stops].map(([shop, targets]) => '<span class="hint">' + esc(shop) + " is on the walk to the stop for " +
+      esc(targets.length > 1 ? targets.slice(0, -1).join(", ") + " and " + targets[targets.length - 1] : targets[0]) + "</span>");
+    return lines([place ? walkText(place) : unknown(NO_WALK), ...toStops]);
+  };
+  const gymHtml = (card) => {
+    const walk = firstOf("walk", "gym", card), ride = firstOf("transit", "gym", card), car = firstOf("drive", "gym", card);
+    const rideFaster = ride && (!walk || ride.min + ride.every_min / 2 < walk.min);
+    return lines([
+      walk ? walkText(walk) : rideFaster ? "" : unknown(NO_WALK),
+      rideFaster ? placeName(ride) + " · <b>" + ride.min + " min</b> by " + routesText(ride.routes) + ", every " + ride.every_min + " min" : "",
+      car ? placeName(car) + " · <b>" + car.min + " min</b> by car, " + car.km + " km" : "",
+    ]);
+  };
+  const nearbyBlock = (card) => {
+    if (!card.nearby.walk) return "";
+    const mall = firstOf("walk", "mall", card);
+    const around = Object.entries(card.around).map(([kind, near]) => esc(AROUND[kind] || kind) + " " + distanceText(near.m)).join(" · ");
+    return block("Nearby",
+      row("Grocery", groceryHtml(card)) +
+      row("Gym", gymHtml(card)) +
+      row("Mall", mall ? walkText(mall) : "") +
+      row("Around", around));
+  };
+  const detourText = (place) => place.plus_min === 0 ? "right on the way, no extra time" : "adds " + place.plus_min + " min to the drive";
+  const errandsBlock = (card) => {
+    const group = (title, rows) => rows ? '<p class="sub">' + title + '</p><dl class="rows">' + rows + "</dl>" : "";
+    const nearest = ["diy", "mall"].map((category) => {
+      const place = firstOf("drive", category, card);
+      return place ? row(CATEGORY[category], placeName(place) + " · " + place.min + " min, " + place.km + " km") : "";
+    }).join("");
+    const stops = (found) => Object.entries(found)
+      .map(([category, place]) => row(CATEGORY[category], placeName(place) + " · " + detourText(place))).join("");
+    const ways = Object.entries(card.onTheWay).map(([target, way]) =>
+      group("Stops on the drive to " + esc(target), stops(way.there)) +
+      group("Stops on the drive back from " + esc(target), stops(way.back))).join("");
+    if (!nearest && !ways) return "";
+    return '<details class="block"><summary>Shops by car: the nearest and those on the way to work</summary>' +
+      group("Nearest by car from home", nearest) + ways + "</details>";
+  };
+
+  const alertsHtml = (card) => card.alerts.length
+    ? '<div class="alerts">' + card.alerts.map((alert) => '<span class="alert ' + alert.level + '"' +
+        (alert.quote ? ' title="' + esc(alert.quote) + '"' : "") + ">" + (alert.level === "red" ? "⚠ " : "") + esc(alert.text) + "</span>").join("") + "</div>"
+    : "";
+  const perM2Html = (card) => {
+    const parts = [];
+    if (card.price && card.area) parts.push(money(Math.round(card.price / card.area)) + " €/m²");
+    if (card.ratio != null) {
+      const percent = Math.round(Math.abs(1 - card.ratio) * 100);
+      const tone = card.ratio <= 0.9 ? "good" : card.ratio >= 1.15 ? "bad" : "";
+      parts.push('<b class="' + tone + '">' + (percent === 0 ? "the district's usual price"
+        : percent + "% " + (card.ratio < 1 ? "below" : "above") + " the district") + "</b>");
+    }
+    return parts.length ? '<span class="per-m2">' + parts.join(" · ") + "</span>" : "";
+  };
   const specOf = (card) => {
-    const floor = card.floor != null ? "floor " + card.floor + "/" + (card.floors ?? "?") : "";
+    const floor = card.floor != null ? "floor " + card.floor + " of " + (card.floors ?? "?") : "";
     return [card.rooms ? card.rooms + (card.rooms === 1 ? " room" : " rooms") : "rooms ?",
       card.area ? card.area + " m²" : "", floor].filter(Boolean).join(" · ");
   };
 
   const cardHtml = (card) => {
     const mark = markOf(card);
-    const tags = (card.new ? "NEW " : "") + (card.cheaper ? "↓" : "");
+    const tags = (card.new ? "NEW " : "") + (card.cheaper ? "↓ cheaper" : "");
     const photo = card.photo
       ? '<img class="photo" loading="lazy" alt="" src="' + esc(card.photo) + '">'
       : '<div class="photo">no photo</div>';
-    const located = Object.keys(card.best).length > 0;
-    const routes = located
-      ? '<dl class="routes">' + data.targetNames.map((name) =>
-          "<dt>" + esc(name) + "</dt><dd>" + bestHtml(card.best[name]) + carHtml(card.drive[name]) + "</dd>").join("") + "</dl>"
-      : '<p class="history">Address not found in the register: no journeys.</p>';
-    const quotes = [...new Set([card.layout.quote, card.land.quote, card.heating.quote, card.hotWater.quote,
-      card.replanning.quote, ...card.alerts.map((alert) => alert.quote)].filter(Boolean))];
-    const source = Object.entries(card.source).map(([key, value]) => esc(key) + ": " + esc(value)).join(" · ");
-    const why = quotes.length || source
-      ? '<details class="why"><summary>What the listing says</summary>' +
-        quotes.map((quote) => "<p>“" + esc(quote) + "”</p>").join("") +
-        (source ? '<p class="source">On SS.com: ' + source + "</p>" : "") + "</details>"
-      : "";
     const prices = [card.price, ...card.ads.map((ad) => ad.price)].filter((price) => price != null);
     const ads = card.ads.length
       ? '<details class="ads"><summary>The same flat in ' + (card.ads.length + 1) + " ads, " +
@@ -689,7 +729,8 @@ details.how .chip { margin-right: 4px; }
         card.ads.map((ad) => '<li><a href="' + esc(ad.url) + '" target="_blank" rel="noopener" data-open="' + esc(card.id) + '">' +
           money(ad.price) + " € ↗</a></li>").join("") + "</ul></details>"
       : "";
-    return '<article class="card' + (mark === "fav" ? " fav" : "") + '" id="c-' + esc(card.id) + '">' + photo +
+    const classes = "card" + (mark === "fav" ? " fav" : "") + (card.id === shared ? " shared" : "");
+    return '<article class="' + classes + '" id="c-' + esc(card.id) + '"><div class="card-top">' + photo +
       '<div class="head"><div class="price-row"><span class="price">' + money(card.price) + " €</span>" +
       (tags ? '<span class="marks">' + tags + "</span>" : "") +
       '<span class="actions"><button type="button" class="mark-btn" data-act="fav" data-id="' + esc(card.id) +
@@ -699,9 +740,9 @@ details.how .chip { margin-right: 4px; }
       '<span class="spec">' + esc(specOf(card)) + "</span>" +
       '<span class="addr">' + esc(card.address || "address ?") + (card.approx ? " ≈" : "") +
       (card.district ? '<span class="district"> · ' + esc(card.district) + "</span>" : "") +
-      (seenOf(card) ? '<span class="seen"> · opened</span>' : "") + "</span></div>" +
-      alertsHtml(card) + '<div class="facts">' + pills(card) + "</div>" + utilityHtml(card) + buildingHtml(card.building) + surroundingsHtml(card) +
-      historyHtml(card.history) + routes + why + ads + '<div class="foot">' +
+      (seenOf(card) ? '<span class="seen"> · opened</span>' : "") + "</span>" + perM2Html(card) + "</div></div>" +
+      alertsHtml(card) + flatBlock(card) + commuteBlock(card) + nearbyBlock(card) + errandsBlock(card) + ads +
+      '<div class="foot"><button type="button" class="small-btn" data-act="share" data-id="' + esc(card.id) + '">Share</button>' +
       (card.lat != null ? '<button type="button" class="small-btn" data-act="map" data-id="' + esc(card.id) + '">On the map</button>' : "") +
       '<a href="' + esc(card.url) + '" target="_blank" rel="noopener" data-open="' + esc(card.id) + '">ss.com ↗</a></div></article>';
   };
@@ -720,7 +761,10 @@ details.how .chip { margin-right: 4px; }
   };
   const shownFlats = () => {
     let shown = data.cards.filter(visible);
-    if (state.sort !== "default") {
+    if (query.length && state.sort === "default") {
+      shown = shown.map((card, index) => [-(searchScore(card) ?? -1), index, card])
+        .sort((a, b) => a[0] - b[0] || a[1] - b[1]).map((entry) => entry[2]);
+    } else if (state.sort !== "default") {
       shown = shown.map((card, index) => [sortKey(card), index, card])
         .sort((a, b) => compareKeys(a[0], b[0]) || a[1] - b[1]).map((entry) => entry[2]);
     }
@@ -737,21 +781,16 @@ details.how .chip { margin-right: 4px; }
     $("shown").textContent = current.length + " shown";
     const active = activeFilters();
     $("more-summary").textContent = active ? "Filters · " + active + " on" : "Filters";
-    $("rejected-box").hidden = state.view === "today";
     $("f-to").hidden = !JOURNEY_SORTS[state.sort];
-    const why = state.view === "today"
-      ? "<p>" + esc(data.today.rules.join(" · ")) + ". Of those, no flat here is beaten by another at once on price, " +
-        "journey time to all targets and floor area; if fewer than " + data.today.size +
-        " are left, flats beaten only by those come next.</p>"
-      : "";
-    const note = '<details class="how"><summary>' + (why ? "Why these flats, how to read a card" : "How to read a card") +
-      "</summary>" + why + legend + "</details>";
+    const title = query.length ? "Found" : sortTitle();
+    const note = query.length ? "<p>Search looks through every flat on the page: Today and the filters do not apply.</p>" : "";
     if (!current.length) {
-      $("list").innerHTML = '<div class="section"><h2>' + esc(sortTitle()) + "</h2>" + note + "</div>" +
-        '<p class="empty">No flat matches these filters. Clear one to see more.</p>';
+      $("list").innerHTML = '<div class="section"><h2>' + esc(title) + "</h2>" + note + "</div>" +
+        '<p class="empty">' + (query.length ? "No flat at this address. Check the spelling or type less of it."
+          : "No flat matches these filters. Clear one to see more.") + "</p>";
       return;
     }
-    $("list").innerHTML = '<div class="section"><h2>' + esc(sortTitle()) + ' <span class="n">' + current.length +
+    $("list").innerHTML = '<div class="section"><h2>' + esc(title) + ' <span class="n">' + current.length +
       "</span></h2>" + note + '</div><div class="grid" id="grid"></div><div class="more-cards" id="more-cards"></div>';
     renderMore();
     if (observer) observer.disconnect();
@@ -800,12 +839,26 @@ details.how .chip { margin-right: 4px; }
   window.addEventListener("resize", keepPlace);
 
   let toastTimer = null;
-  const toast = (text, undo) => {
+  const toast = (text, undo, ms = 5000) => {
     $("toast-text").textContent = text;
     $("toast").hidden = false;
-    $("toast-undo").onclick = () => { undo(); $("toast").hidden = true; };
+    $("toast-undo").hidden = !undo;
+    $("toast-undo").onclick = () => { if (undo) undo(); $("toast").hidden = true; };
     clearTimeout(toastTimer);
-    toastTimer = setTimeout(() => { $("toast").hidden = true; }, 5000);
+    toastTimer = setTimeout(() => { $("toast").hidden = true; }, ms);
+  };
+  const shareCard = (card) => {
+    const url = location.href.split("#")[0] + "#" + card.id;
+    if (navigator.share && matchMedia("(pointer: coarse)").matches) {
+      navigator.share({ title: money(card.price) + " € · " + (card.address || "flat") + " · " + specOf(card), url }).catch(() => {});
+      return;
+    }
+    const show = () => toast("Copy this link: " + url, null, 20000);
+    if (navigator.clipboard && navigator.clipboard.writeText) {
+      navigator.clipboard.writeText(url).then(() => toast("Link copied: " + url, null), show);
+    } else {
+      show();
+    }
   };
 
   let map = null;
@@ -984,16 +1037,34 @@ details.how .chip { margin-right: 4px; }
     }
   };
 
-  const showCard = (id) => {
+  const showCard = (id, flash = true) => {
     selectTab("list");
     const index = current.findIndex((card) => card.id === id);
     if (index < 0) return;
     renderMore(index + 1);
     const element = $("c-" + id);
     if (!element) return;
-    element.scrollIntoView({ block: "center" });
+    const header = $("top");
+    const covered = getComputedStyle(header).position === "sticky" ? header.offsetHeight : 0;
+    element.style.scrollMarginTop = covered + 12 + "px";
+    element.scrollIntoView({ block: "start" });
+    if (!flash) return;
     element.classList.add("flash");
     setTimeout(() => element.classList.remove("flash"), 1600);
+  };
+  const openShared = () => {
+    const id = decodeURIComponent(location.hash.slice(1));
+    const card = id ? data.cards.find((item) => groupIds(item).includes(id)) : null;
+    if (!card) {
+      if (shared) { shared = null; renderList(); }
+      if (id) toast("This flat is no longer on the list: its ad was removed or no longer fits.", null, 8000);
+      return;
+    }
+    shared = card.id;
+    query = [];
+    $("f-search").value = "";
+    renderList();
+    showCard(card.id, false);
   };
 
   const timeOf = (card) => {
@@ -1118,7 +1189,7 @@ details.how .chip { margin-right: 4px; }
     '" aria-pressed="' + selected + '"><span class="time">' + journey.minutes + " min</span>" +
     '<span class="every">every ' + journey.every_min + " min</span>" +
     '<span class="legs">' + legsHtml(journey.legs) + "</span>" +
-    '<span class="walk">' + walkText(journey.walk_m) + "</span>" +
+    '<span class="walk">' + walkMetres(journey.walk_m) + "</span>" +
     '<span class="stops">' + esc(journey.legs.map((leg) => mapStopName(leg.board) + " → " + mapStopName(leg.alight)).join(" · ")) + "</span></button>";
 
   const PLACE_TOKENS = { grocery: "--good", gym: "--accent", diy: "--mark", mall: "--fav" };
@@ -1200,6 +1271,11 @@ details.how .chip { margin-right: 4px; }
   for (const [id, key] of checks) {
     $(id).addEventListener("change", () => { state[key] = $(id).checked; refresh(); });
   }
+  $("f-search").addEventListener("input", () => {
+    query = wordsOf($("f-search").value).filter((word) => !SEARCH_NOISE.has(word));
+    renderList();
+    if (state.tab === "map") renderMap();
+  });
   $("view-today").addEventListener("click", () => { state.view = "today"; refresh(); });
   $("view-all").addEventListener("click", () => { state.view = "all"; refresh(); });
   $("tab-list").addEventListener("click", () => selectTab("list"));
@@ -1212,6 +1288,7 @@ details.how .chip { margin-right: 4px; }
     const card = cardById.get(button.dataset.id);
     if (!card) return;
     if (button.dataset.act === "map") { setSeen(card); showRoutes(card.id); return; }
+    if (button.dataset.act === "share") { shareCard(card); return; }
     const previous = markOf(card);
     const next = previous === button.dataset.act ? null : button.dataset.act;
     setMark(card, next);
@@ -1227,7 +1304,13 @@ details.how .chip { margin-right: 4px; }
     renderFocus();
   });
   if (matchMedia("(min-width: 700px)").matches) $("more").open = true;
+  window.addEventListener("hashchange", openShared);
+  window.addEventListener("load", () => { if (shared) showCard(shared, false); });
   renderList();
-  selectTab(state.tab === "map" ? "map" : "list");
+  selectTab(state.tab === "map" && location.hash.length < 2 ? "map" : "list");
+  if (location.hash.length > 1) {
+    if (window.history && "scrollRestoration" in history) history.scrollRestoration = "manual";
+    openShared();
+  }
 })();
 </script>

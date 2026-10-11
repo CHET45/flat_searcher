@@ -69,6 +69,8 @@ def alerts_for(item: Evaluation) -> list[Alert]:
 
 
 def distance_label(metres: float) -> str:
+    if round(metres) == 0:
+        return "right at the house"
     return f"{round(metres)} m" if metres < 1000 else f"{metres / 1000:.1f} km"
 
 

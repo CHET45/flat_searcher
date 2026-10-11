@@ -147,7 +147,8 @@ class RenderPageTests(TestCase):
         self.assertEqual(data["targets"], [{"name": "office", "lat": 56.9, "lon": 24.1},
                                            {"name": "campus", "lat": 56.95, "lon": 24.0}])
         self.assertEqual(data["mapScript"], "map.js?v=2026-09-24")
-        self.assertEqual((data["counts"]["candidates"], data["counts"]["flats"]), (3, 3))
+        self.assertEqual(data["maxTransfers"], 2)
+        self.assertNotIn("counts", data)
 
     def test_the_card_carries_alerts_heating_hot_water_replanning_and_the_sites_own_values(self) -> None:
         record = _record("a", description="Autonoma gāzes apkure. Karstais ūdens no boilera. "
@@ -163,8 +164,7 @@ class RenderPageTests(TestCase):
         self.assertEqual(card["heating"], {"value": "own_boiler", "quote": "autonoma gāzes apkure."})
         self.assertEqual(card["hotWater"], {"value": "boiler", "quote": "karstais ūdens no boilera."})
         self.assertEqual(card["replanning"], {"value": "unstated", "quote": "dzīvoklis ir pārplānots."})
-        self.assertEqual(card["source"], {"Cena": "35 000 € (700 €/m²)", "Platība": "50 m²", "Istabas": "2",
-                                          "Stāvs": "3/5", "Sērija": "P. kara"})
+        self.assertNotIn("source", card)
         self.assertNotIn("flags", card)
         self.assertEqual(card["building"], {})
         built = _cards(_page([_record("b")], [{**_located("b"), "building": {"wear": "V3", "wear_date": "2019-03-02", "built": 1975, "floors": 9}}]))["b"]
@@ -249,7 +249,6 @@ class RenderPageTests(TestCase):
         self.assertEqual(card["firstSeen"], "2026-09-01")
         self.assertEqual(card["photo"], "photos/b.jpg")
         self.assertEqual(page.photo_ids, ("b",))
-        self.assertEqual(_data(page)["counts"]["flats"], 1)
 
     def test_price_history_lists_the_first_price_and_each_change(self) -> None:
         events = [
@@ -264,7 +263,7 @@ class RenderPageTests(TestCase):
         self.assertEqual(card["history"], [["", 42000], ["2026-09-15", 39000], ["2026-09-22", 35000]])
         self.assertEqual(_cards(_page([_record("b")]))["b"]["history"], [])
 
-    def test_today_marks_the_front_and_names_its_rules(self) -> None:
+    def test_today_marks_the_front(self) -> None:
         listings = [_record("big", price=38000, house="1"), _record("small", price=30000, house="2"),
                     _record("dear", price=39000, house="3"), _record("nowhere", house="4")]
         listings[0]["core"]["area_m2"] = 60
@@ -273,8 +272,6 @@ class RenderPageTests(TestCase):
         cards = {card["id"]: card for card in data["cards"]}
         self.assertEqual({ss_id: card["today"] for ss_id, card in cards.items()},
                          {"big": 1, "small": 1, "dear": None, "nowhere": None})
-        self.assertNotIn("not on the ground floor", data["today"]["rules"])
-        self.assertEqual(data["today"]["size"], 2)
 
     def test_seller_text_cannot_close_the_data_script(self) -> None:
         page = _page([_record("x", description="Istabas izolētas </script><script>alert(1)</script>.")])
@@ -307,12 +304,12 @@ class PageScriptTests(TestCase):
     """The page's own script, run offline: Leaflet and map.js never load."""
 
     def _run(self, page: PageFiles, actions: list | None = None, storage: dict | None = None,
-             now: str = "2026-09-24T12:00:00") -> dict:
+             now: str = "2026-09-24T12:00:00", hash_: str = "") -> dict:
         with tempfile.TemporaryDirectory() as temp:
             path = Path(temp) / "index.html"
             path.write_bytes(page.html.encode("utf-8"))
             result = subprocess.run(
-                [str(NODE), str(HARNESS), str(path), json.dumps(actions or []), json.dumps(storage or {}), now],
+                [str(NODE), str(HARNESS), str(path), json.dumps(actions or []), json.dumps(storage or {}), now, hash_],
                 capture_output=True, text=True, encoding="utf-8", check=False,
             )
         self.assertEqual(result.returncode, 0, result.stderr)
@@ -369,25 +366,47 @@ class PageScriptTests(TestCase):
         self.assertEqual(self._run(self._flats(), now="2026-09-27T08:00:00")["stale"],
                          "Data from 24.09, 3 days old: prices and availability may have changed.")
 
-    def test_alerts_open_the_card_and_the_heating_line_follows_the_pills(self) -> None:
-        listings = [_record("stove", description="Centrālā apkure. Istabā arī krāsns apkure."),
-                    _record("plain", house="2", description="Mājā ir centrālā apkure.")]
-        building = {"wear": "V4", "wear_date": "2019-03-02", "built": 1975, "floors": 9}
-        transit = [{**_located("stove"), "building": building}, _located("plain")]
-        listed = self._run(_page(listings, transit), [{"click": "view-all"}])["list"]
+    def _card_parts(self, listed: str) -> dict[str, str]:
         cards = {}
         for part in listed.split("<article")[1:]:
             found = re.search(r'id="c-([^"]+)"', part)
             assert found is not None
             cards[found.group(1)] = part
-        self.assertIn('<span class="alert red">⚠ stove heating</span>', cards["stove"])
-        self.assertLess(cards["stove"].index('class="alerts"'), cards["stove"].index('class="facts"'))
-        self.assertIn("Heating: <b>city, central</b> · Hot water: <b>not stated</b>", cards["stove"])
-        self.assertIn("“istabā arī krāsns apkure.”", cards["stove"])
-        self.assertIn("⚠ building wear V4, unsatisfactory: check with the bank", cards["stove"])
-        self.assertIn("Building: built 1975 · 9 floors · wear <b>V4 unsatisfactory</b> (VZD 2019)", cards["stove"])
-        self.assertNotIn('class="alerts"', cards["plain"])
-        self.assertNotIn("Building:", cards["plain"])
+        return cards
+
+    def test_alerts_open_the_card_and_every_fact_says_plainly_when_the_ad_is_silent(self) -> None:
+        listings = [_record("stove", description="Centrālā apkure. Istabā arī krāsns apkure."),
+                    _record("plain", house="2", description="Mājā ir centrālā apkure. 2 izolētas istabas. Zeme ir īpašumā.")]
+        listings[1]["fields"]["Uzņēmums"] = "SIA Aģentūra"
+        building = {"wear": "V4", "wear_date": "2019-03-02", "built": 1975, "floors": 9}
+        transit = [{**_located("stove"), "building": building}, _located("plain")]
+        cards = self._card_parts(self._run(_page(listings, transit), [{"click": "view-all"}])["list"])
+        stove, plain = cards["stove"], cards["plain"]
+        self.assertIn('<span class="alert red" title="istabā arī krāsns apkure.">⚠ stove heating</span>', stove)
+        self.assertLess(stove.index('class="alerts"'), stove.index("The flat and the house"))
+        self.assertIn('<dt>Heating</dt><dd title="centrālā apkure.">central, from the city network</dd>', stove)
+        self.assertIn('<dt>Hot water</dt><dd><span class="unknown">not mentioned in the ad</span></dd>', stove)
+        self.assertIn('<dt>Land</dt><dd><span class="unknown">not mentioned in the ad</span></dd>', stove)
+        self.assertIn('<dt>Rooms</dt><dd><span class="unknown">not known: the ad does not say</span></dd>', stove)
+        self.assertIn("<dt>House</dt><dd>pre-war · masonry · built 1975 · 9 floors</dd>", stove)
+        self.assertIn('<dt>Wear</dt><dd><span class="bad">V4 · unsatisfactory</span> '
+                      '<span class="hint">(state cadastre, surveyed 2019)</span></dd>', stove)
+        self.assertIn("<dt>Seller</dt><dd>private person</dd>", stove)
+        self.assertIn("2 rooms · 50 m² · floor 3 of 5", stove)
+        self.assertIn('700 €/m² · <b class="good">30% below the district</b>', stove)
+        self.assertNotIn('class="alerts"', plain)
+        self.assertNotIn("<dt>Wear</dt>", plain)
+        self.assertIn('<dt>Rooms</dt><dd title="2 izolētas istabas."><span class="good">isolated: every room has its own door</span></dd>', plain)
+        self.assertIn('<dt>Land</dt><dd title="zeme ir īpašumā."><span class="good">belongs to the flat owners</span></dd>', plain)
+        self.assertIn("<dt>Seller</dt><dd>agency: SIA Aģentūra</dd>", plain)
+
+    def test_the_page_has_no_counts_line_no_sieve_and_no_reading_guide(self) -> None:
+        listed = self._run(self._flats(), [{"click": "view-all"}])["list"]
+        for gone in ("Rejected by the sieve", "How to read a card", "What the listing says", "active ·"):
+            self.assertNotIn(gone, listed)
+        html = self._flats().html
+        self.assertNotIn('id="summary"', html)
+        self.assertNotIn('id="rejected', html)
 
     def test_turning_the_phone_keeps_the_card_that_was_at_the_top_in_place(self) -> None:
         portrait = {"c-small": {"top": -400, "bottom": -100}, "c-big": {"top": -100, "bottom": 200},
@@ -418,46 +437,104 @@ class PageScriptTests(TestCase):
                               "grocery": [], "diy": [{"name": "Depo", "lat": 56.9, "lon": 24.2, "min": 7, "km": 3.1}],
                               "mall": []},
                     "on_the_way": {"office": {"there": {"diy": {"name": "Depo", "lat": 56.9, "lon": 24.2, "plus_min": 2}},
-                                              "back": {}, "on_foot": {"grocery": rimi}}},
+                                              "back": {"grocery": {"name": "", "lat": 56.9, "lon": 24.1, "plus_min": 0}},
+                                              "on_foot": {"grocery": rimi}},
+                                   "campus": {"there": {}, "back": {}, "on_foot": {"grocery": rimi}}},
                     "around": {"cemetery": {"name": "Meža kapi", "m": 420, "lat": 56.93, "lon": 24.13}}}
         listings = [_record("far", price=30000), _record("near", price=38000, house="2")]
         transit = [{**_located("far"), "surroundings": near(12)}, {**_located("near"), "surroundings": near(3)}]
         shown = self._run(_page(listings, transit), [{"click": "view-all"}, {"change": "f-sort", "value": "grocery"}])
         self.assertEqual(shown["cards"], ["near", "far"])
-        self.assertIn("car ≈ 14 min · 6.2 km, back 16 min", shown["list"])
-        self.assertIn("On foot: grocery Rimi <b>3 min</b>", shown["list"])
-        self.assertIn("By car: DIY Depo <b>7 min</b> · 3.1 km", shown["list"])
-        self.assertIn("On the way to office: grocery Rimi on foot to the stop · DIY Depo +2 min by car", shown["list"])
-        self.assertIn("Around: cemetery 420 m", shown["list"])
-        folded = shown["list"].index('<details class="why"><summary>Shops by car and on the way</summary>')
-        self.assertLess(shown["list"].index("Around: cemetery"), folded)
-        self.assertLess(folded, shown["list"].index("By car: DIY Depo"))
-        self.assertLess(folded, shown["list"].index("On the way to office"))
+        card = self._card_parts(shown["list"])["near"]
+        self.assertIn('<span class="car">by car 14 min, 6.2 km · back 16 min</span>', card)
+        self.assertIn('<dt>Grocery</dt><dd><span class="line">Rimi · <b>3 min</b> on foot</span>'
+                      '<span class="line"><span class="hint">Rimi is on the walk to the stop for office and campus</span></span></dd>', card)
+        self.assertIn("<dt>Around</dt><dd>cemetery 420 m</dd>", card)
+        folded = card.index("<summary>Shops by car: the nearest and those on the way to work</summary>")
+        self.assertLess(card.index("<dt>Around</dt>"), folded)
+        self.assertEqual(card.index('<p class="sub">Nearest by car from home</p>'), card.index("</summary>", folded) + 10)
+        self.assertIn("<dt>DIY store</dt><dd>Depo · 7 min, 3.1 km</dd>", card)
+        self.assertIn('<p class="sub">Stops on the drive to office</p><dl class="rows">'
+                      "<dt>DIY store</dt><dd>Depo · adds 2 min to the drive</dd></dl>", card)
+        self.assertIn('<p class="sub">Stops on the drive back from office</p><dl class="rows">'
+                      "<dt>Grocery</dt><dd>unnamed · right on the way, no extra time</dd></dl>", card)
 
     def test_the_card_has_a_gym_line_and_the_gym_sort_counts_transit(self) -> None:
         def gyms(walk: int | None, ride: int | None) -> dict:
-            near = {"walk": {"grocery": [{"name": "Rimi", "lat": 56.92, "lon": 24.12, "min": 3, "m": 250}],
-                             "gym": [] if walk is None else [{"name": "MyFitness", "lat": 56.9, "lon": 24.2,
+            return {"walk": {"grocery": [{"name": "Rimi", "lat": 56.92, "lon": 24.12, "min": 3, "m": 250}],
+                             "gym": [] if walk is None else [{"name": "Gym! Barons", "lat": 56.9, "lon": 24.2,
                                                               "min": walk, "m": walk * 83}], "mall": []},
-                    "drive": {"targets": {}, "gym": [{"name": "MyFitness", "lat": 56.9, "lon": 24.2, "min": 5, "km": 2.4}]},
-                    "transit": {"gym": [] if ride is None else [{"name": "Lemon Gym", "lat": 56.95, "lon": 24.15,
+                    "drive": {"targets": {}, "gym": [{"name": "Gym! Barons", "lat": 56.9, "lon": 24.2, "min": 5, "km": 2.4}]},
+                    "transit": {"gym": [] if ride is None else [{"name": "Gym! Origo", "lat": 56.95, "lon": 24.15,
                                                                  "min": ride, "every_min": 8, "transfers": 1, "walk_m": 600,
                                                                  "routes": [["bus 3"], ["tram 1", "tram 6"]]}]},
                     "around": {}}
-            return near
 
         listings = [_record("walk", price=30000), _record("ride", price=38000, house="2"),
                     _record("none", price=36000, house="3")]
         transit = [{**_located("walk"), "surroundings": gyms(14, 11)},
                    {**_located("ride"), "surroundings": gyms(None, 6)},
-                   {**_located("none"), "surroundings": gyms(None, None)}]
+                   {**_located("none"), "surroundings": {**gyms(None, None), "drive": {"targets": {}}}}]
         shown = self._run(_page(listings, transit), [{"click": "view-all"}, {"change": "f-sort", "value": "gym"}])
         self.assertEqual(shown["cards"], ["ride", "walk", "none"])
-        self.assertEqual(shown["list"].count("On foot: grocery Rimi <b>3 min</b></p>"), 3)
-        self.assertIn("Gym: MyFitness on foot <b>14 min</b> · MyFitness by car <b>5 min</b> · 2.4 km", shown["list"])
-        self.assertIn("Gym: none within 30 min on foot · Lemon Gym by bus 3 → tram 1 <b>6 min</b>, every 8"
-                      " · MyFitness by car <b>5 min</b> · 2.4 km", shown["list"])
+        cards = self._card_parts(shown["list"])
+        by_car = '<span class="line">Gym! Barons · <b>5 min</b> by car, 2.4 km</span></dd>'
+        self.assertIn('<dt>Gym</dt><dd><span class="line">Gym! Barons · <b>14 min</b> on foot</span>' + by_car, cards["walk"])
+        self.assertIn('<dt>Gym</dt><dd><span class="line">Gym! Origo · <b>6 min</b> by bus 3 → tram 1, every 8 min</span>'
+                      + by_car, cards["ride"])
+        self.assertIn('<dt>Gym</dt><dd><span class="line"><span class="unknown">none within a 30-minute walk</span></span></dd>',
+                      cards["none"])
 
     def test_sorting_by_price_reorders_the_cards(self) -> None:
         shown = self._run(self._flats(), [{"click": "view-all"}, {"change": "f-sort", "value": "area"}])
         self.assertEqual(shown["cards"], ["big", "small", "dear"])
+
+    def _streets(self) -> PageFiles:
+        listings = [_record("bri-1", price=30000, house="1"), _record("bri-117", price=31000, house="117"),
+                    _record("cak-1", price=32000, house="1"), _record("hidden", price=33000, house="9")]
+        listings[1]["core"]["district"] = "Centrs"
+        listings[2]["core"]["street"] = "K. Čaka"
+        listings[3]["core"]["street"] = "Dzirnavu"
+        return _page(listings, [_located(ss_id) for ss_id in ("bri-1", "bri-117", "cak-1", "hidden")])
+
+    def test_search_narrows_the_list_as_the_address_is_typed_ignoring_accents_and_case(self) -> None:
+        marks = {"riga-flat-shortlist-marks": '{"hidden": "hide"}'}
+        typed = lambda *values: [{"input": "f-search", "value": value} for value in values]  # noqa: E731
+        self.assertEqual(self._run(self._streets(), typed("bri"), marks)["cards"], ["bri-1", "bri-117"])
+        self.assertEqual(self._run(self._streets(), typed("bri", "BRIVIBAS iela 1"), marks)["cards"], ["bri-1", "bri-117"])
+        self.assertEqual(self._run(self._streets(), typed("brīvības 117"), marks)["cards"], ["bri-117"])
+        self.assertEqual(self._run(self._streets(), typed("1"), marks)["cards"], ["bri-1", "cak-1", "bri-117"])
+        self.assertEqual(self._run(self._streets(), typed("caka"), marks)["cards"], ["cak-1"])
+        self.assertEqual(self._run(self._streets(), typed("centrs"), marks)["cards"], ["bri-117"])
+        self.assertEqual(self._run(self._streets(), typed("dzirnavu"), marks)["cards"], ["hidden"])
+        found = self._run(self._streets(), typed("nowhere"), marks)
+        self.assertEqual(found["cards"], [])
+        self.assertIn("No flat at this address.", found["list"])
+        cleared = self._run(self._streets(), [{"click": "view-all"}, *typed("caka", "")], marks)
+        self.assertEqual(cleared["cards"], ["bri-1", "bri-117", "cak-1"])
+        self.assertNotIn("riga-flat-shortlist-search", json.dumps(cleared["storage"]))
+
+    def test_share_gives_a_link_to_the_card(self) -> None:
+        shown = self._run(self._flats(), [{"click": "list", "act": "share", "id": "big"}])
+        self.assertEqual(shown["toast"], "Copy this link: https://example.test/flats/#big")
+        self.assertFalse(shown["undo"])
+
+    def test_a_shared_link_opens_the_list_at_that_flat_outlined_whatever_the_view_and_filters(self) -> None:
+        storage = {"riga-flat-shortlist-filters": '{"tab": "map", "band": "1"}'}
+        opened = self._run(self._flats(), [], storage, hash_="#dear-copy")
+        self.assertEqual(opened["cards"], ["dear"])
+        self.assertIn('<article class="card shared" id="c-dear">', opened["list"])
+        self.assertEqual(opened["intoView"][-1], "c-dear")
+        self.assertIsNone(opened["toast"])
+        self.assertEqual(json.loads(opened["storage"]["riga-flat-shortlist-filters"])["band"], "1")
+        later = self._run(self._flats(), [{"hash": "#small"}], hash_="#dear")
+        self.assertIn('<article class="card shared" id="c-small">', later["list"])
+        self.assertNotIn('class="card shared" id="c-dear"', later["list"])
+        self.assertEqual(later["intoView"][-1], "c-small")
+        searching = self._run(self._flats(), [{"input": "f-search", "value": "nowhere"}, {"hash": "#dear"}])
+        self.assertEqual(searching["cards"], ["small", "big", "dear"])
+
+    def test_a_link_to_a_flat_no_longer_listed_says_so(self) -> None:
+        gone = self._run(self._flats(), [], hash_="#sold")
+        self.assertEqual(gone["toast"], "This flat is no longer on the list: its ad was removed or no longer fits.")
+        self.assertEqual(gone["cards"], ["small", "big"])

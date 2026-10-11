@@ -78,6 +78,8 @@ class AlertTests(TestCase):
         self.assertEqual(_texts(_alerts(around=around)),
                          [("amber", "industrial zone 120 m"), ("amber", "landfill 1.8 km")])
         self.assertEqual(_alerts(around={"industrial": {"name": "", "m": 151}}), [])
+        self.assertEqual(_texts(_alerts(around={"industrial": {"name": "", "m": 0}})),
+                         [("amber", "industrial zone right at the house")])
 
     def test_red_comes_before_amber(self) -> None:
         alerts = _alerts("Autonoma gāzes apkure. Zeme zem mājas ir nomā.", area=18)
