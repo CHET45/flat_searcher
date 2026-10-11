@@ -532,7 +532,7 @@ class SurroundedSources(FakeSources):
 
 
 class SurroundingsRunTests(TestCase):
-    def _run(self, sources: FakeSources) -> tuple[dict[str, dict], int]:
+    def _run(self, sources: FakeSources, criteria: str = CRITERIA) -> tuple[dict[str, dict], int]:
         with tempfile.TemporaryDirectory() as temp_dir:
             store = LocalLibraryStore(Path(temp_dir))
             listing = _listing("a1", "Mājas", "1")
@@ -540,7 +540,7 @@ class SurroundingsRunTests(TestCase):
             dear = _listing("z9", "Mājas", "1")
             dear["core"].update({"price_eur": 90000, "declared_rooms": 2})
             store.save_listings({"a1": listing, "z9": dear, "u0": _listing("u0", "Mājas", "1")})
-            result = TransitRun(store, sources, parse_criteria(CRITERIA), NOW).run()
+            result = TransitRun(store, sources, parse_criteria(criteria), NOW).run()
             return {entry["ss_id"]: entry for entry in store.read_transit()}, result.surroundings
 
     def test_a_flat_that_passes_the_price_gate_gets_its_surroundings(self) -> None:
@@ -562,6 +562,26 @@ class SurroundingsRunTests(TestCase):
             "name": "Office gym", "lat": WORK[0], "lon": WORK[1], "min": 13, "every_min": 8,
             "transfers": 0, "walk_m": office["walk_m"], "routes": [["bus 1", "bus 5"]],
         }]})
+
+    def test_gyms_named_in_the_criteria_replace_every_other_gym(self) -> None:
+        places = {"pois": [["gym", "Office gym", *WORK]], "areas": []}
+        lab = point(*TARGET_TWO)
+        chosen = CRITERIA + f"""
+[[surroundings.gyms]]
+name = "Chain lab"
+lat = {lab[0]}
+lon = {lab[1]}
+[[surroundings.gyms]]
+name = "Chain lost"
+address = "Neesošā iela 4"
+"""
+        entries, _ = self._run(SurroundedSources(places=places), chosen)
+        near = entries["a1"]["surroundings"]
+        self.assertEqual([gym["name"] for gym in near["transit"]["gym"]], ["Chain lab"])
+        self.assertEqual([gym["name"] for gym in near["drive"]["gym"]], [])
+        self.assertEqual([gym["name"] for gym in near["walk"]["gym"]], [])
+        office_only, _ = self._run(SurroundedSources(places=places))
+        self.assertEqual([gym["name"] for gym in office_only["a1"]["surroundings"]["drive"]["gym"]], ["Office gym"])
 
     def test_without_a_gym_there_is_no_transit_entry_to_one(self) -> None:
         entries, _ = self._run(SurroundedSources())

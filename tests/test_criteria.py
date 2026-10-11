@@ -102,6 +102,25 @@ class ParseCriteriaTests(TestCase):
         self.assertEqual(criteria.excluded_floors, frozenset())
         self.assertIsNone(criteria.gym_max_min)
 
+    def test_gyms_are_named_places_given_by_address_or_point(self) -> None:
+        price = "[price]\nmax_eur = 1\n"
+        criteria = parse_criteria(price + """
+[[surroundings.gyms]]
+name = "Gym! Origo"
+address = "Stacijas laukums 2"
+[[surroundings.gyms]]
+name = "Gym! Teika"
+lat = 56.97
+lon = 24.17
+""")
+        self.assertEqual(criteria.gyms, (Target("Gym! Origo", "Stacijas laukums 2", None, None),
+                                         Target("Gym! Teika", None, 56.97, 24.17)))
+        self.assertEqual(parse_criteria(price).gyms, ())
+        with self.assertRaisesRegex(CriteriaError, "surroundings.gyms Nowhere needs an address"):
+            parse_criteria(price + '[[surroundings.gyms]]\nname = "Nowhere"\n')
+        with self.assertRaisesRegex(CriteriaError, "surroundings.gyms.url"):
+            parse_criteria(price + '[[surroundings.gyms]]\nname = "A"\naddress = "B 1"\nurl = "x"\n')
+
     def test_unknown_keys_are_errors_that_name_the_key(self) -> None:
         with self.assertRaisesRegex(CriteriaError, "max_price"):
             parse_criteria("[price]\nmax_price = 1\n")

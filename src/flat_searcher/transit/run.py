@@ -9,7 +9,7 @@ from collections.abc import Callable, Mapping, Sequence
 from typing import Any, Protocol
 
 from flat_searcher.library import ACTIVE, LibraryStore
-from flat_searcher.shortlist.criteria import Criteria, target_definition
+from flat_searcher.shortlist.criteria import Criteria, Target as CriteriaTarget, target_definition
 from flat_searcher.shortlist.rank import expected_minutes
 from flat_searcher.transit.addresses import APPROX, EXACT, AddressIndex, Location, RegisterEntry
 from flat_searcher.transit.geometry import encode_polyline
@@ -71,14 +71,11 @@ class TransitRun:
         unresolved = 0
         for target in self._criteria.targets if self._criteria else ():
             definitions[target.name] = target_definition(target)
-            if target.lat is not None and target.lon is not None:
-                points[target.name] = (target.lat, target.lon)
-                continue
-            location = index.locate_text(target.address or "")
-            if location is None:
+            found = _point(index, target)
+            if found is None:
                 unresolved += 1
             else:
-                points[target.name] = (location.lat, location.lon)
+                points[target.name] = found
 
         feed = planner = walk = None
         targets: dict[str, Target] = {}
@@ -98,7 +95,7 @@ class TransitRun:
             targets = {name: planner.target(lat, lon) for name, (lat, lon) in points.items()}
 
         buildings = self._buildings()
-        around = self._around(points) if walk is not None else None
+        around = self._around(points, index) if walk is not None else None
         gyms = (around[1].by_category.get("gym") or []) if around is not None else []
         gym_target = planner.nearest([(gym.lat, gym.lon) for gym in gyms]) if planner and gyms else None
         near_at: dict[tuple[float, float], dict[str, Any]] = {}
@@ -198,7 +195,7 @@ class TransitRun:
         )
 
     def _around(
-        self, points: Mapping[str, tuple[float, float]]
+        self, points: Mapping[str, tuple[float, float]], index: AddressIndex
     ) -> tuple[DriveGraph, Places, dict[str, TargetFields]] | None:
         try:
             drive = DriveGraph.from_data(self._sources.drive_graph())
@@ -206,6 +203,12 @@ class TransitRun:
         except Exception as error:
             logger.warning("surroundings unavailable: %s", type(error).__name__)
             return None
+        if self._criteria and self._criteria.gyms:
+            located = [(gym.name, _point(index, gym)) for gym in self._criteria.gyms]
+            gyms = [Place("gym", name, *found) for name, found in located if found is not None]
+            if len(gyms) < len(located):
+                logger.warning("gyms not found in the register: %d", len(located) - len(gyms))
+            places.replace("gym", gyms)
         return drive, places, {name: target_fields(drive, lat, lon) for name, (lat, lon) in points.items()}
 
     def _worth_surroundings(self, core: Mapping[str, Any]) -> bool:
@@ -224,6 +227,13 @@ class TransitRun:
         except Exception as error:
             logger.warning("building register unavailable: %s", type(error).__name__)
             return None
+
+
+def _point(index: AddressIndex, target: CriteriaTarget) -> tuple[float, float] | None:
+    if target.lat is not None and target.lon is not None:
+        return target.lat, target.lon
+    location = index.locate_text(target.address or "")
+    return None if location is None else (location.lat, location.lon)
 
 
 def _first_walks(journeys: Mapping[str, list[dict[str, Any]]]) -> dict[str, str]:

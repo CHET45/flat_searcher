@@ -17,7 +17,7 @@ _SECTIONS: dict[str, frozenset[str]] = {
     "price": frozenset({"max_eur", "bands"}),
     "rooms": frozenset({"order"}),
     "floor": frozenset({"exclude"}),
-    "surroundings": frozenset({"gym_max_min"}),
+    "surroundings": frozenset({"gym_max_min", "gyms"}),
     "building": frozenset({"excluded_types"}),
     "heating": frozenset({"exclude_stove"}),
     "transit": frozenset(
@@ -77,6 +77,7 @@ class Criteria:
     today: TodayRules = TodayRules()
     excluded_floors: frozenset[int] = frozenset()
     gym_max_min: int | None = None
+    gyms: tuple[Target, ...] = ()
 
     def band_index(self, price: float) -> int | None:
         if price > self.max_eur:
@@ -121,10 +122,11 @@ def parse_criteria(text: str) -> Criteria:
         ),
         max_transfers=int(transit.get("max_transfers", DEFAULT_MAX_TRANSFERS)),
         journeys_max=int(transit.get("journeys_max", DEFAULT_JOURNEYS_MAX)),
-        targets=tuple(_target(target) for target in transit.get("targets", [])),
+        targets=tuple(_target(target, "transit.targets") for target in transit.get("targets", [])),
         today=_today(_section(data, "today")),
         excluded_floors=_floors(_section(data, "floor").get("exclude", [])),
         gym_max_min=_minutes(_section(data, "surroundings").get("gym_max_min"), "surroundings.gym_max_min"),
+        gyms=tuple(_target(gym, "surroundings.gyms") for gym in _section(data, "surroundings").get("gyms", [])),
     )
 
 
@@ -195,10 +197,10 @@ def _band(band: Any) -> tuple[int, int]:
     return band[0], band[1]
 
 
-def _target(target: Any) -> Target:
+def _target(target: Any, key: str) -> Target:
     if not isinstance(target, Mapping) or not isinstance(target.get("name"), str):
-        raise CriteriaError("every transit.targets entry needs a name")
-    _reject_unknown(target.keys(), _TARGET_KEYS, "transit.targets.")
+        raise CriteriaError(f"every {key} entry needs a name")
+    _reject_unknown(target.keys(), _TARGET_KEYS, f"{key}.")
     name = target["name"]
     address = target.get("address")
     lat, lon = target.get("lat"), target.get("lon")
@@ -208,7 +210,7 @@ def _target(target: Any) -> Target:
         else None
     )
     if not isinstance(address, str) and point is None:
-        raise CriteriaError(f"target {name} needs an address or both lat and lon")
+        raise CriteriaError(f"{key} {name} needs an address or both lat and lon")
     return Target(
         name=name,
         address=address if isinstance(address, str) else None,

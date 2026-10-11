@@ -84,6 +84,13 @@ class Places:
                 lons = [lon for _, lon in ring]
                 self._areas.append(Area(str(kind), str(name), ring, min(lats), min(lons), max(lats), max(lons)))
 
+    def replace(self, category: str, places: Sequence[Place]) -> None:
+        self.by_category[category] = list(places)
+        for key in [key for key in self._grid if key[0] == category]:
+            del self._grid[key]
+        for place in places:
+            self._grid.setdefault((category, *_cell(place.lat, place.lon)), []).append(place)
+
     def near(self, category: str, lat: float, lon: float, radius_m: float) -> list[Place]:
         reach = math.ceil(radius_m / METRES_PER_DEGREE / CELL_DEGREES / math.cos(math.radians(lat)))
         row, column = _cell(lat, lon)
