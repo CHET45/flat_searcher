@@ -357,7 +357,7 @@ details.ads a { color: var(--accent); }
         <label id="l-visit"><input type="checkbox" id="f-visit"> <span id="visit-label">New or cheaper since my last visit</span></label>
         <label><input type="checkbox" id="f-fresh"> NEW or ↓ since the last digest</label>
         <label><input type="checkbox" id="f-all"> Direct ride to all targets</label>
-        <label><input type="checkbox" id="f-isolated"> Isolated rooms</label>
+        <label><input type="checkbox" id="f-isolated"> Isolated rooms or not stated</label>
       </div>
     </details>
   </div>
@@ -522,7 +522,7 @@ details.ads a { color: var(--accent); }
     (!state.all || card.reached === allTargets) &&
     (!state.fresh || card.new || card.cheaper) &&
     (!state.visit || !lastVisit || changedSince(card, lastVisit)) &&
-    (!state.isolated || card.layout.value === "isolated") &&
+    (!state.isolated || card.layout.value === "isolated" || card.layout.value === "unknown") &&
     markPasses(card);
   const fold = (text) => String(text ?? "").normalize("NFD").replace(/[\u0300-\u036f]/g, "").toLowerCase();
   const wordsOf = (text) => fold(text).split(/[^a-z0-9\u0400-\u04ff]+/).filter(Boolean);

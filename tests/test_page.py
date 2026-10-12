@@ -361,6 +361,15 @@ class PageScriptTests(TestCase):
                           {"riga-flat-shortlist-visits": '{"current": "2026-08-30"}'})
         self.assertEqual(later["cards"], ["small", "big", "dear"])
 
+    def test_isolated_rooms_keeps_flats_whose_ad_does_not_say(self) -> None:
+        listings = [_record("isolated", house="1", description="2 izolētas istabas."),
+                    _record("walkthrough", house="2", description="Divas caurstaigājamas istabas."),
+                    _record("silent", house="3", description="Gaišs."),
+                    _record("studio", house="4", rooms=1, description="Gaišs.")]
+        transit = [_located(ss_id) for ss_id in ("isolated", "walkthrough", "silent", "studio")]
+        shown = self._run(_page(listings, transit), [{"click": "view-all"}, {"change": "f-isolated", "checked": True}])
+        self.assertEqual(sorted(shown["cards"]), ["isolated", "silent"])
+
     def test_a_page_older_than_a_day_says_how_old_its_data_is(self) -> None:
         self.assertIsNone(self._run(self._flats(), now="2026-09-24T23:30:00")["stale"])
         self.assertEqual(self._run(self._flats(), now="2026-09-27T08:00:00")["stale"],
