@@ -10,7 +10,7 @@ from typing import Any
 MAX_EVIDENCE_CHARS = 160
 
 _ROOM = (
-    r"(?<!vannas )(?<!ванная )(?<!ванной )"
+    r"(?<!\bvannas )(?<!\bванная )(?<!\bванной )"
     r"(?:\w*istab\w*|комнат\w*|гостин\w*|спальн\w*)"
 )
 _NOT = r"(?<!\bne )(?<!\bnav )(?<!\bне )"
@@ -28,6 +28,10 @@ _ISOLATED = re.compile(
     rf"\b{_ISOLATED_WORD}\s+(?:\w+\s+)?{_ROOM}"
     rf"|{_ROOMS}\s+(?:[\w,]+\s+){{0,3}}{_ISOLATED_WORD}{_NOT_KITCHEN}"
 )
+_PLURAL_ISOLATED = re.compile(
+    r"\b(?:divu|abu|2)\s+izolētu\b|\bizolēt(?:as|ās|i|ie|ām|ajām|ajās|o)\b"
+    r"|\bизолированн\w*?(?:ые|ых|ыми|ым|ы)\b"
+)
 
 SERIES_PRIOR: dict[str, str] = {
     "Hrušč.": "walkthrough",
@@ -39,6 +43,7 @@ SERIES_PRIOR: dict[str, str] = {
 LAYOUT_RANK: dict[tuple[str, str], int] = {
     ("isolated", "text"): 4,
     ("isolated", "series"): 3,
+    ("isolated", "one room"): 3,
     ("unknown", "none"): 2,
     ("n/a", "none"): 2,
     ("walkthrough", "series"): 1,
@@ -223,7 +228,11 @@ def layout_fact(record: Mapping[str, Any]) -> Fact:
         return Fact("walkthrough", "text", walkthrough)
     isolated = _evidence(_ISOLATED, text)
     if isolated:
-        return Fact("isolated", "text", isolated)
+        both = any(
+            _PLURAL_ISOLATED.search(text, max(0, match.start() - 5), match.end())
+            for match in _ISOLATED.finditer(text)
+        )
+        return Fact("isolated", "text" if both else "one room", isolated)
     series = _series(record)
     prior = SERIES_PRIOR.get(series)
     if prior:

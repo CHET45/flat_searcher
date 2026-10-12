@@ -118,7 +118,7 @@ def _card(
     core = record.get("core") or {}
     fields = record.get("fields") or {}
     entry = selection.transit.get(item.ss_id) or {}
-    layout_quote = item.layout.evidence[0] if item.layout.source == "text" and item.layout.evidence else None
+    layout_quote = item.layout.evidence[0] if item.layout.source in ("text", "one room") and item.layout.evidence else None
     first_seen = min(str(ad.record.get("first_seen") or "")[:10] for ad in group)
     return {
         "id": item.ss_id,

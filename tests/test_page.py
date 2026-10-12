@@ -409,6 +409,15 @@ class PageScriptTests(TestCase):
         self.assertIn('<dt>Land</dt><dd title="zeme ir īpašumā."><span class="good">belongs to the flat owners</span></dd>', plain)
         self.assertIn("<dt>Seller</dt><dd>agency: SIA Aģentūra</dd>", plain)
 
+    def test_one_isolated_bedroom_is_shown_as_saying_nothing_about_the_other_room(self) -> None:
+        listings = [_record("bedroom", description="Viesistaba ar virtuvi, izolēta guļamistaba.")]
+        page = _page(listings, [_located("bedroom")])
+        self.assertEqual(_data(page)["cards"][0]["layout"],
+                         {"value": "isolated", "source": "one room", "quote": "viesistaba ar virtuvi, izolēta guļamistaba."})
+        card = self._card_parts(self._run(page, [{"click": "view-all"}, {"change": "f-isolated", "checked": True}])["list"])
+        self.assertIn('<dt>Rooms</dt><dd title="viesistaba ar virtuvi, izolēta guļamistaba.">'
+                      "<span>one room has its own door; the ad does not say about the other</span></dd>", card["bedroom"])
+
     def test_the_page_has_no_counts_line_no_sieve_and_no_reading_guide(self) -> None:
         listed = self._run(self._flats(), [{"click": "view-all"}])["list"]
         for gone in ("Rejected by the sieve", "How to read a card", "What the listing says", "active ·"):

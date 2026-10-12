@@ -570,13 +570,15 @@ details.ads a { color: var(--accent); }
   const block = (title, rows) => rows ? '<section class="block"><h3>' + title + '</h3><dl class="rows">' + rows + "</dl></section>" : "";
 
   const LAYOUT = {
-    isolated: { text: "isolated: every room has its own door", series: "isolated, as usual for this series" },
+    isolated: { text: "isolated: every room has its own door", series: "isolated, as usual for this series",
+      "one room": "one room has its own door; the ad does not say about the other" },
     walkthrough: { text: "one room is walk-through, the ad says", series: "one room is walk-through, as usual for this series" },
   };
   const layoutHtml = (layout) => {
     if (layout.value === "n/a") return "";
     if (layout.value === "unknown") return unknown("not known: the ad does not say");
     const words = LAYOUT[layout.value][layout.source] || layout.value;
+    if (layout.source === "one room") return "<span>" + esc(words) + "</span>";
     return '<span class="' + (layout.value === "isolated" ? "good" : "bad") + '">' + esc(words) + "</span>";
   };
   const SERIES = { "Jaun.": "new building", "P. kara": "pre-war", "Renov.": "renovated pre-war", "LT proj.": "Lithuanian project",

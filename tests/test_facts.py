@@ -31,7 +31,16 @@ class LayoutFactTests(TestCase):
         self.assertLayout("Istabas ir lielas un izolētas, viena ar skatu uz parku.", "isolated")
         self.assertLayout("Удобная планировка: комнаты изолированные.", "isolated")
         self.assertLayout("Квартира с двумя изолированными комнатами.", "isolated")
-        self.assertLayout("Plaša viesistaba, izolēta guļamistaba, vannas istaba.", "isolated")
+        self.assertLayout("Divu izolētu istabu dzīvoklis.", "isolated")
+        self.assertLayout("Dzīvoklis ar izolētām istabām.", "isolated")
+
+    def test_one_isolated_room_says_nothing_about_the_other(self) -> None:
+        self.assertLayout("Plaša viesistaba, izolēta guļamistaba, vannas istaba.", "isolated", "one room")
+        self.assertLayout("Viesistaba ar virtuves zonu; izolētā guļamistaba.", "isolated", "one room")
+        self.assertLayout("Dzīvojamā istaba un izolētu istabu.", "isolated", "one room")
+        self.assertLayout("Гостиная и изолированная спальня.", "isolated", "one room")
+        self.assertLayout("Гостиная и изолированную спальню.", "isolated", "one room")
+        self.assertLayout("Izolēta guļamistaba. Abas istabas izolētas.", "isolated")
 
     def test_walkthrough_rooms_in_latvian_and_russian(self) -> None:
         self.assertLayout("44 kvm, viesistaba caurstaigājama, vannas istaba.", "walkthrough")
@@ -65,6 +74,10 @@ class LayoutFactTests(TestCase):
         self.assertLayout("Plaša halle, dzīvojamā istaba, guļamistaba un izolēta virtuve.", "unknown", "none")
         self.assertLayout("Большая прихожая, гостиная, спальня и изолированная кухня.", "unknown", "none")
 
+    def test_an_isolated_bathroom_is_not_an_isolated_room(self) -> None:
+        self.assertLayout("Изолированная ванная комната.", "unknown", "none")
+        self.assertLayout("Izolēta vannas istaba.", "unknown", "none")
+
     def test_series_prior_applies_only_when_the_text_is_silent(self) -> None:
         self.assertLayout("Gaišs dzīvoklis.", "walkthrough", "series", series="Hrušč.")
         self.assertLayout("Gaišs dzīvoklis.", "isolated", "series", series="602.")
@@ -80,16 +93,17 @@ class LayoutFactTests(TestCase):
         self.assertTrue(all(len(snippet) <= 160 for snippet in fact.evidence))
         self.assertIn("izolētas istabas", fact.evidence[0])
 
-    def test_rank_orders_text_over_series(self) -> None:
+    def test_rank_orders_both_rooms_stated_over_one_room_or_series(self) -> None:
         ranks = [
             LAYOUT_RANK[("isolated", "text")],
-            LAYOUT_RANK[("isolated", "series")],
+            LAYOUT_RANK[("isolated", "one room")],
             LAYOUT_RANK[("unknown", "none")],
             LAYOUT_RANK[("walkthrough", "series")],
             LAYOUT_RANK[("walkthrough", "text")],
         ]
         self.assertEqual(ranks, sorted(ranks, reverse=True))
         self.assertEqual(len(set(ranks)), 5)
+        self.assertEqual(LAYOUT_RANK[("isolated", "one room")], LAYOUT_RANK[("isolated", "series")])
 
 
 class HeatingFactTests(TestCase):
