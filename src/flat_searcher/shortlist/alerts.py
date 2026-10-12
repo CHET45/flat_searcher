@@ -7,6 +7,7 @@ from typing import Literal
 
 from flat_searcher.shortlist.facts import Fact
 from flat_searcher.shortlist.rank import Evaluation
+from flat_searcher.transit.buildings import APARTMENT_USE, UNKNOWN_USE
 
 IMPLAUSIBLE_RATIO = 0.4
 ROOM_SIZED_M2 = 20
@@ -15,6 +16,26 @@ WEAR_ALERTS = {
     "V4": "building wear V4, unsatisfactory: check with the bank",
     "V5": "building wear V5, critical",
 }
+USE_NAMES = {
+    "1110": "a one-dwelling house",
+    "1130": "a dormitory",
+    "1211": "a hotel or restaurant",
+    "1212": "short-stay lodging",
+    "1220": "offices",
+    "1230": "shops",
+    "1241": "a station or communications building",
+    "1251": "a factory",
+    "1252": "a warehouse",
+    "1261": "an entertainment venue",
+    "1262": "a museum or library",
+    "1263": "a school or research building",
+    "1264": "a hospital or clinic",
+    "1265": "a sports building",
+    "1271": "a farm building",
+    "1272": "a church",
+    "1273": "a heritage object",
+}
+UNKNOWN_USE_ALERT = "building use not recorded in the cadastre: check with the bank"
 AROUND_WORDS = {
     "industrial": "industrial zone",
     "works": "factory",
@@ -54,6 +75,9 @@ def alerts_for(item: Evaluation) -> list[Alert]:
     wear = item.building.get("wear")
     if wear in WEAR_ALERTS:
         red.append(Alert("red", WEAR_ALERTS[wear]))
+    use = item.building.get("use")
+    if use is not None and not str(use).startswith(APARTMENT_USE):
+        amber.append(Alert("amber", use_alert(str(use))))
     judgment = item.record.get("judgment") or {}
     if judgment.get("mortgage_risk") in HIGH_MORTGAGE_RISK:
         reasons = ", ".join(str(reason) for reason in judgment.get("mortgage_reasons") or [])
@@ -66,6 +90,13 @@ def alerts_for(item: Evaluation) -> list[Alert]:
             amber.append(Alert("amber", f"{AROUND_WORDS[kind]} {distance_label(near['m'])}"))
     amber.extend(Alert("amber", text) for text in suspicion_flags(item))
     return red + amber
+
+
+def use_alert(use: str) -> str:
+    if use == UNKNOWN_USE:
+        return UNKNOWN_USE_ALERT
+    registered = f"as {USE_NAMES[use]}" if use in USE_NAMES else f"under use code {use}"
+    return f"building registered {registered}, not as an apartment building: check with the bank"
 
 
 def distance_label(metres: float) -> str:

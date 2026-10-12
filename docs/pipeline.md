@@ -271,11 +271,14 @@ the VZD state address register (`aw_eka.csv`, ~140 MB; only existing Riga buildi
 reduced to ~0.5 MB of encoded polylines) for ninety days, with two mirrors and the stale copy
 as the last resort. An Overpass answer carrying a `remark` (a runtime error or timeout, partial
 data) counts as a failed mirror and is never cached; when the stale copy stands in for a
-refresh, `transit` ends its line with `streets=stale` or `places=stale` and logs a warning. The VZD cadastre's open building data (`building.zip`, ~240 MB, weekly,
-CC BY 4.0) is reduced to Riga's apartment buildings (use codes 112x) and cached as
-`riga-buildings.json` for seven days: wear group V1–V5 with its survey date, year built,
-floors and wall material, joined to a listing through the register's address code; several
-apartment buildings at one address give the worst group. Only exact matches get building data;
+refresh, `transit` ends its line with `streets=stale` or `places=stale` and logs a warning.
+The VZD cadastre's open building data (`building.zip`, ~240 MB, weekly, CC BY 4.0) is reduced to
+one building per Riga address and cached as `riga-buildings.json` for seven days: wear group
+V1–V5 with its survey date, year built, floors, wall material and use code, joined to a listing
+through the register's address code. An apartment building (use 112x) stands for its address;
+where there is none, the building of another use there does (offices, shops, hotels, factories,
+use not recorded…; never sheds 1274, garages 1242 or structures 2xxx), and the page flags it.
+Several candidate buildings at one address give the worst group. Only exact matches get building data;
 a failed download leaves it out and the run goes on (`buildings=N` counts the listings with it).
 SS.com addresses are matched against the register: first names dropped by
 SS.com, abbreviated street types, block numbers (`k-1`) and `59/61` numbers are handled. A
@@ -344,7 +347,8 @@ digest. Removed candidates are counted in the header. **Alerts**, red: stove hea
 that is not negated, land not or only partly owned, a denationalised house), building wear V4 or
 V5, the model's mortgage risk high or critical; amber: an industrial zone or works within 150 m,
 a cemetery within 100 m, a bog within 500 m, a landfill within 2 km, a sewage plant within 1.5 km,
-a stove in the flat, a replanning without
+a stove in the flat, a building the cadastre registers for another use than flats (offices,
+shops…) or for no recorded use, a replanning without
 a stated status, heating from an own boiler or the house's boiler room, price below 0.4× the
 district's €/m², under 20 m². The digest has a wear column (group and survey year).
 

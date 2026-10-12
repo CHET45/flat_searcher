@@ -153,7 +153,7 @@ class TransitSources:
         finally:
             archive_path.unlink(missing_ok=True)
         if not buildings:
-            raise TransitSourceError("the Riga building file lists no apartment building")
+            raise TransitSourceError("the Riga building file lists no building that can hold flats")
         _write_atomic(path, json.dumps(buildings, ensure_ascii=False).encode("utf-8"))
 
     def streets(self) -> Streets:

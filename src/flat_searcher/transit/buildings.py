@@ -1,4 +1,8 @@
-"""Wear group, age, floors and walls of Riga's apartment buildings from the VZD cadastre."""
+"""Wear group, age, floors and walls of the building at each Riga address from the VZD cadastre.
+
+An apartment building (use 112x) stands for its address; where there is none, any other building
+there does, except sheds, garages and structures, and keeps its use code so the page can flag it.
+"""
 
 from __future__ import annotations
 
@@ -9,6 +13,9 @@ from typing import IO, Any
 
 NAMESPACE = "{http://ivis.eps.gov.lv/XMLSchemas/100007/CadastreRegistry/v1-0}"
 APARTMENT_USE = "112"
+UNKNOWN_USE = "0"
+BUILDING_USE = "1"
+AUXILIARY_USES = ("1242", "1274")
 WEAR_GROUPS = ("V1", "V2", "V3", "V4", "V5")
 WALLS_ELEMENT = "Sienas"
 SEVERAL = "several buildings"
@@ -36,7 +43,8 @@ _MATERIALS = _path(
 
 
 def parse_buildings(stream: IO[bytes]) -> dict[str, Building]:
-    found: dict[str, list[Building]] = defaultdict(list)
+    apartments: dict[str, list[Building]] = defaultdict(list)
+    others: dict[str, list[Building]] = defaultdict(list)
     for _, element in ET.iterparse(stream):
         if element.tag != _ITEM:
             continue
@@ -45,9 +53,15 @@ def parse_buildings(stream: IO[bytes]) -> dict[str, Building]:
             code = _text(basic, _CODE)
             use = _text(basic, _USE)
             if code and use.startswith(APARTMENT_USE):
-                found[code].append(_building(element, basic, use))
+                apartments[code].append(_building(element, basic, use))
+            elif code and _may_hold_flats(use):
+                others[code].append(_building(element, basic, use))
         element.clear()
-    return {code: _worst(buildings) for code, buildings in found.items()}
+    return {code: _worst(apartments.get(code) or others[code]) for code in others | apartments}
+
+
+def _may_hold_flats(use: str) -> bool:
+    return use == UNKNOWN_USE or (use.startswith(BUILDING_USE) and use not in AUXILIARY_USES)
 
 
 def _building(element: ET.Element, basic: ET.Element, use: str) -> Building:

@@ -72,6 +72,35 @@ class AlertTests(TestCase):
         self.assertEqual(_alerts(building={"wear": "V3"}), [])
         self.assertEqual(_alerts(building={"note": "new build"}), [])
 
+    def test_a_building_registered_for_another_use_is_amber(self) -> None:
+        self.assertEqual(
+            _texts(_alerts(building={"wear": "V2", "use": "1220"})),
+            [("amber", "building registered as offices, not as an apartment building: check with the bank")],
+        )
+        self.assertEqual(
+            _texts(_alerts(building={"wear": "V5", "use": "1230"})),
+            [("red", "building wear V5, critical"),
+             ("amber", "building registered as shops, not as an apartment building: check with the bank")],
+        )
+        self.assertEqual(
+            _texts(_alerts(building={"use": "1110"})),
+            [("amber", "building registered as a one-dwelling house, not as an apartment building: check with the bank")],
+        )
+        self.assertEqual(
+            _texts(_alerts(building={"use": "1299"})),
+            [("amber", "building registered under use code 1299, not as an apartment building: check with the bank")],
+        )
+
+    def test_a_building_whose_use_is_not_recorded_is_amber(self) -> None:
+        self.assertEqual(
+            _texts(_alerts(building={"wear": "V1", "use": "0"})),
+            [("amber", "building use not recorded in the cadastre: check with the bank")],
+        )
+
+    def test_an_apartment_building_has_no_use_alert(self) -> None:
+        for use in ("1122", "1121"):
+            self.assertEqual(_alerts(building={"wear": "V2", "use": use}), [])
+
     def test_a_close_nuisance_is_amber_and_a_farther_one_is_not(self) -> None:
         around = {"industrial": {"name": "", "m": 120}, "cemetery": {"name": "Meža kapi", "m": 400},
                   "landfill": {"name": "Getliņi", "m": 1800}, "bog": {"name": "", "m": 900}}

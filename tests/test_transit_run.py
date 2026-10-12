@@ -192,7 +192,7 @@ class TransitSourcesTests(TestCase):
             self.assertEqual(later.buildings(), {"1": PARSED})
             self.assertEqual(len(opener.calls), 4)
 
-    def test_buildings_fail_without_one_riga_file_with_an_apartment_building(self) -> None:
+    def test_buildings_fail_without_one_riga_file_with_a_building_that_can_hold_flats(self) -> None:
         second_part = "Building/0001000_20260926_540199/5C687023-DCC1.xml"
         for archive in (
             _cadastre_zip({OTHER_FILE: _cadastre_file("900")}),

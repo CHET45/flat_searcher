@@ -8,6 +8,11 @@ USES = {
     "1121": ("Dzīvojamā māja", "Divu dzīvokļu mājas"),
     "1122": ("Dzīvojamā māja", "Triju vai vairāku dzīvokļu mājas"),
     "1274": ("Šķūnis", "Citas, iepriekš neklasificētas, ēkas"),
+    "1220": ("Biroju ēka", "Biroju ēkas"),
+    "1230": ("Veikals", "Vairumtirdzniecības un mazumtirdzniecības ēkas"),
+    "1242": ("Garāža", "Garāžu ēkas"),
+    "2112": ("Iela", "Ielas, ceļi un laukumi"),
+    "0": ("Ēka", "Nav noteikts"),
 }
 
 
@@ -99,8 +104,41 @@ class ParseBuildingsTests(TestCase):
              "use": "1122"},
         )
 
-    def test_only_apartment_buildings_are_kept(self) -> None:
-        self.assertEqual(sorted(self.buildings), ["101", "102", "103", "104"])
+    def test_every_address_with_a_building_that_can_hold_a_flat_is_kept(self) -> None:
+        self.assertEqual(sorted(self.buildings), ["101", "102", "103", "104", "105"])
+
+    def test_an_address_without_an_apartment_building_takes_the_building_that_stands_there(self) -> None:
+        offices = parse_buildings(io.BytesIO(_file(
+            _building("8", "1274", "V5", None, "1960", "1"),
+            _building("8", "1220", "V2", "2018-06-01", "1974", "12", (PANELS,)),
+        )))
+        self.assertEqual(
+            offices["8"],
+            {"wear": "V2", "wear_date": "2018-06-01", "built": 1974, "floors": 12, "walls": PANELS,
+             "use": "1220"},
+        )
+        self.assertEqual(self.buildings["105"]["use"], "1110")
+        unregistered = parse_buildings(io.BytesIO(_file(_building("6", "0", "V1", built="2024"))))
+        self.assertEqual(unregistered["6"]["use"], "0")
+        self.assertEqual(unregistered["6"]["wear"], "V1")
+
+    def test_an_apartment_building_is_preferred_over_a_worse_building_of_another_use(self) -> None:
+        apartment, office = _building("9", "1122", "V2"), _building("9", "1220", "V5")
+        for order in ((apartment, office), (office, apartment)):
+            found = parse_buildings(io.BytesIO(_file(*order)))["9"]
+            self.assertEqual((found["use"], found["wear"], "note" in found), ("1122", "V2", False))
+
+    def test_sheds_garages_and_structures_never_stand_in_for_the_building(self) -> None:
+        found = parse_buildings(io.BytesIO(_file(
+            _building("1", "1274", "V3"), _building("2", "1242", "V3"), _building("3", "2112", "V3"),
+            _building("4", "1242", "V5"), _building("4", "1230", "V1"),
+        )))
+        self.assertEqual(sorted(found), ["4"])
+        self.assertEqual((found["4"]["use"], found["4"]["wear"]), ("1230", "V1"))
+
+    def test_several_buildings_of_other_uses_report_the_worst_one(self) -> None:
+        found = parse_buildings(io.BytesIO(_file(_building("7", "1230", "V3"), _building("7", "1220", "V4"))))
+        self.assertEqual((found["7"]["use"], found["7"]["wear"], found["7"]["note"]), ("1220", "V4", "several buildings"))
 
     def test_several_apartment_buildings_at_one_address_report_the_worst_one(self) -> None:
         self.assertEqual(
