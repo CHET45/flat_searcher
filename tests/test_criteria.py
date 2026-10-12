@@ -78,11 +78,14 @@ class ParseCriteriaTests(TestCase):
         self.assertEqual(criteria.excluded_floors, frozenset({0, 1}))
         self.assertEqual(criteria.gym_max_min, 12)
 
-    def test_band_index_follows_preference_order_and_half_open_bounds(self) -> None:
+    def test_band_bounds_are_inclusive_and_a_shared_bound_goes_to_the_earlier_band(self) -> None:
         criteria = parse_criteria(SKETCH)
         self.assertEqual(criteria.band_index(35000), 0)
+        self.assertEqual(criteria.band_index(30000), 0)
+        self.assertEqual(criteria.band_index(40000), 0)
         self.assertEqual(criteria.band_index(29999), 1)
-        self.assertEqual(criteria.band_index(40000), 2)
+        self.assertEqual(criteria.band_index(40001), 2)
+        self.assertEqual(criteria.band_index(50000), 2)
         self.assertEqual(criteria.band_index(60000), 3)
         self.assertIsNone(criteria.band_index(60001))
 

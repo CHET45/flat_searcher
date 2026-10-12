@@ -218,7 +218,7 @@ this repository carries defaults that describe a buyer. Unknown keys are errors.
 ```toml
 [price]
 max_eur = 60000
-bands = [[30000, 40000], [0, 30000], [40000, 50000], [50000, 60000]]  # preference order
+bands = [[30000, 45000], [0, 30000], [45000, 50000], [50000, 60000]]  # preference order; bounds inclusive, a shared bound goes to the earlier band
 
 [rooms]
 order = [2, 1]                 # allowed counts, most preferred first

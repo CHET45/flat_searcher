@@ -83,10 +83,7 @@ class Criteria:
         if price > self.max_eur:
             return None
         for index, (low, high) in enumerate(self.bands):
-            if low <= price < high:
-                return index
-        for index, (_, high) in enumerate(self.bands):
-            if price == high == self.max_eur:
+            if low <= price <= high:
                 return index
         return None
 
