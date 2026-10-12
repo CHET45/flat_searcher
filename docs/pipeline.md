@@ -269,7 +269,9 @@ the Rīgas Satiksme GTFS feed (newest monthly archive of the data.gov.lv timetab
 the VZD state address register (`aw_eka.csv`, ~140 MB; only existing Riga buildings are kept,
 ~49k), both for seven days, and Riga's streets from the Overpass API (roads, railways, water;
 reduced to ~0.5 MB of encoded polylines) for ninety days, with two mirrors and the stale copy
-as the last resort. The VZD cadastre's open building data (`building.zip`, ~240 MB, weekly,
+as the last resort. An Overpass answer carrying a `remark` (a runtime error or timeout, partial
+data) counts as a failed mirror and is never cached; when the stale copy stands in for a
+refresh, `transit` ends its line with `streets=stale` or `places=stale` and logs a warning. The VZD cadastre's open building data (`building.zip`, ~240 MB, weekly,
 CC BY 4.0) is reduced to Riga's apartment buildings (use codes 112x) and cached as
 `riga-buildings.json` for seven days: wear group V1–V5 with its survey date, year built,
 floors and wall material, joined to a listing through the register's address code; several

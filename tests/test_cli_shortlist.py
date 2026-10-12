@@ -29,6 +29,8 @@ GIT = shutil.which("git") or "git"
 
 
 class FakeSources:
+    stale: set[str] = set()
+
     def gtfs_zip(self) -> bytes:
         return build_feed()
 
@@ -92,10 +94,12 @@ class ShortlistCliTests(TestCase):
         self._environment.stop()
         self._temp.cleanup()
 
-    def _run(self, *argv: str, http: type = FakeHttpClient) -> tuple[int, str]:
+    def _run(
+        self, *argv: str, http: type = FakeHttpClient, sources: type = FakeSources
+    ) -> tuple[int, str]:
         output = io.StringIO()
         with contextlib.redirect_stdout(output), patch(
-            "flat_searcher.cli.TransitSources", lambda *args, **kwargs: FakeSources()
+            "flat_searcher.cli.TransitSources", lambda *args, **kwargs: sources()
         ), patch("flat_searcher.cli.HttpTextClient", http):
             code = main(list(argv))
         text = output.getvalue()
@@ -201,3 +205,16 @@ class ShortlistCliTests(TestCase):
         self.assertNotIn("Home stop", text)
         self.assertEqual(len(self.store.read_transit()), 2)
         self.assertIn("shapes", self.store.read_transit_map())
+
+    def test_transit_says_which_datasets_came_from_a_stale_cache(self) -> None:
+        self._write_criteria(CRITERIA)
+        code, text = self._run("transit")
+        self.assertEqual(code, 0)
+        self.assertNotIn("stale", text)
+
+        class StaleSources(FakeSources):
+            stale = {"streets", "places"}
+
+        code, text = self._run("transit", sources=StaleSources)
+        self.assertEqual(code, 0)
+        self.assertIn("surroundings=0 places=stale streets=stale\n", text)

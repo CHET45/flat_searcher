@@ -321,6 +321,65 @@ class TransitSourcesTests(TestCase):
                 TransitSources(Path(temp_dir), opener, NOW).places()
             self.assertEqual(os.listdir(temp_dir), [])
 
+    def test_a_refresh_that_falls_back_to_the_cache_says_which_datasets_are_stale(self) -> None:
+        with tempfile.TemporaryDirectory() as temp_dir:
+            opener = FakeOpener()
+            fresh = TransitSources(Path(temp_dir), opener, NOW)
+            fresh.places()
+            fresh.streets()
+            self.assertEqual(fresh.stale, set())
+            for endpoint in OVERPASS_ENDPOINTS:
+                for query in (PLACES_QUERY, OVERPASS_QUERY):
+                    opener.responses[endpoint + "?data=" + quote(query)] = OSError("down")
+
+            only_places = TransitSources(Path(temp_dir), opener, NOW, refresh=True)
+            with self.assertLogs("flat_searcher.transit.sources", "WARNING") as logs:
+                self.assertEqual(only_places.places(), reduce_places(PLACES_RESPONSE))
+            self.assertEqual(only_places.stale, {"places"})
+            self.assertEqual(len(logs.output), 1)
+            self.assertIn("places: no Overpass mirror answered (OSError, OSError, OSError)", logs.output[0])
+            self.assertNotIn("http", logs.output[0])
+
+            both = TransitSources(Path(temp_dir), opener, NOW, refresh=True)
+            both.places()
+            self.assertEqual(both.walk_graph(), reduce_walk_graph(OSM_RESPONSE))
+            self.assertEqual(both.stale, {"places", "streets"})
+
+            cached = TransitSources(Path(temp_dir), opener, NOW)
+            cached.places()
+            cached.streets()
+            self.assertEqual(cached.stale, set())
+
+    def test_an_overpass_answer_with_a_remark_is_a_failed_mirror(self) -> None:
+        cut = PLACES_RESPONSE["elements"][:1]
+        partial = {"elements": cut, "remark": "runtime error: Query timed out in \"query\" at line 3"}
+        self.assertNotEqual(reduce_places({"elements": cut}), reduce_places(PLACES_RESPONSE))
+        with tempfile.TemporaryDirectory() as temp_dir:
+            opener = FakeOpener()
+            for url in PLACES_URLS:
+                opener.responses[url] = json.dumps(partial).encode("utf-8")
+            with self.assertRaises(TransitSourceError):
+                TransitSources(Path(temp_dir), opener, NOW).places()
+            self.assertEqual(os.listdir(temp_dir), [])
+
+            opener.responses[PLACES_URLS[2]] = json.dumps(PLACES_RESPONSE).encode("utf-8")
+            sources = TransitSources(Path(temp_dir), opener, NOW)
+            self.assertEqual(sources.places(), reduce_places(PLACES_RESPONSE))
+            self.assertEqual(sources.stale, set())
+
+            opener.responses[PLACES_URLS[2]] = json.dumps(partial).encode("utf-8")
+            later = TransitSources(Path(temp_dir), opener, NOW, refresh=True)
+            self.assertEqual(later.places(), reduce_places(PLACES_RESPONSE))
+            self.assertEqual(later.stale, {"places"})
+
+    def test_streets_from_an_answer_with_a_remark_are_not_cached(self) -> None:
+        with tempfile.TemporaryDirectory() as temp_dir:
+            opener = FakeOpener()
+            opener.responses[STREETS_URL] = json.dumps({**OSM_RESPONSE, "remark": "runtime error: out of memory"}).encode("utf-8")
+            opener.responses[MIRROR_URL] = json.dumps({"elements": []}).encode("utf-8")
+            self.assertEqual(TransitSources(Path(temp_dir), opener, NOW).streets(), reduce_streets({"elements": []}))
+            self.assertEqual(opener.calls, [STREETS_URL, MIRROR_URL])
+
 
 BUILDINGS = {
     "1": {"wear": "V3", "wear_date": "2019-05-14", "built": 1975, "floors": 9,
@@ -332,6 +391,7 @@ BUILDINGS = {
 class FakeSources:
     def __init__(self, buildings: dict | Exception = BUILDINGS) -> None:
         self._buildings = buildings
+        self.stale: set[str] = set()
 
     def gtfs_zip(self) -> bytes:
         return build_feed()

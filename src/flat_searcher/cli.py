@@ -403,6 +403,7 @@ def _run_transit(
         f"transit: exact={result.exact} approx={result.approx} unlocated={result.unlocated} "
         f"targets={result.targets} unresolved_targets={result.unresolved_targets} "
         f"reached_any={result.reached_any} buildings={result.buildings} surroundings={result.surroundings}"
+        + "".join(f" {dataset}=stale" for dataset in sorted(sources.stale))
     )
     return 0
 

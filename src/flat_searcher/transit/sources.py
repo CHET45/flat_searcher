@@ -5,6 +5,7 @@ from __future__ import annotations
 import csv
 import io
 import json
+import logging
 import os
 import re
 import shutil
@@ -61,6 +62,8 @@ PLACES_CACHE = "riga-places.json"
 
 Opener = Callable[[str], IO[bytes]]
 
+logger = logging.getLogger(__name__)
+
 
 def open_url(url: str) -> IO[bytes]:
     request = urllib.request.Request(url, headers={"User-Agent": USER_AGENT})
@@ -84,6 +87,7 @@ class TransitSources:
         self._open = opener
         self._now = now or datetime.now().astimezone()
         self._refresh = refresh
+        self.stale: set[str] = set()
 
     def gtfs_zip(self) -> bytes:
         path = self._cache_dir / GTFS_CACHE
@@ -162,7 +166,7 @@ class TransitSources:
         return self._openstreetmap(DRIVE_CACHE)
 
     def places(self) -> dict[str, Any]:
-        self._overpass(PLACES_QUERY, {PLACES_CACHE: reduce_places}, PLACES_MAX_AGE)
+        self._overpass("places", PLACES_QUERY, {PLACES_CACHE: reduce_places}, PLACES_MAX_AGE)
         return json.loads((self._cache_dir / PLACES_CACHE).read_text(encoding="utf-8"))
 
     def _openstreetmap(self, name: str) -> Any:
@@ -171,11 +175,15 @@ class TransitSources:
             WALK_CACHE: reduce_walk_graph,
             DRIVE_CACHE: reduce_drive_graph,
         }
-        self._overpass(OVERPASS_QUERY, reducers, STREETS_MAX_AGE)
+        self._overpass("streets", OVERPASS_QUERY, reducers, STREETS_MAX_AGE)
         return json.loads((self._cache_dir / name).read_text(encoding="utf-8"))
 
     def _overpass(
-        self, query: str, reducers: Mapping[str, Callable[[Any], object]], max_age: timedelta
+        self,
+        dataset: str,
+        query: str,
+        reducers: Mapping[str, Callable[[Any], object]],
+        max_age: timedelta,
     ) -> None:
         paths = [self._cache_dir / name for name in reducers]
         if all(self._fresh(path, max_age) for path in paths):
@@ -188,11 +196,16 @@ class TransitSources:
             except (OSError, ValueError) as error:
                 failures.append(type(error).__name__)
                 continue
+            if "remark" in data:
+                failures.append("remark")
+                continue
             for path, reduce in zip(paths, reducers.values()):
                 _write_atomic(path, json.dumps(reduce(data), ensure_ascii=False).encode("utf-8"))
             return
         if not all(path.exists() for path in paths):
             raise TransitSourceError(f"no Overpass mirror answered: {', '.join(failures)}")
+        self.stale.add(dataset)
+        logger.warning("%s: no Overpass mirror answered (%s), the cached copy is used", dataset, ", ".join(failures))
 
     def _fresh(self, path: Path, max_age: timedelta = MAX_AGE) -> bool:
         if self._refresh or not path.exists():
