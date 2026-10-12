@@ -97,6 +97,61 @@ class SSParserTests(TestCase):
         self.assertTrue((summary.title or "").startswith("&lt;3 &copy Īpašnieks"))
         self.assertEqual(summary.street, "Grestes &reg 4")
 
+    def test_next_page_is_the_nearest_forward_link_wherever_the_arrow_sits(self) -> None:
+        html = (FIXTURES / "list_page.html").read_text(encoding="utf-8")
+        arrow_start = html.index('<a name="nav_id" rel="next" class="navi" href="/lv/real-estate/flats/riga/all/sell/page2.html">Nākamie')
+        arrow_end = html.index("</a>", arrow_start) + len("</a>")
+        arrow = html[arrow_start:arrow_end]
+        without_arrow = html[:arrow_start] + html[arrow_end:]
+        variants = {
+            "arrow last": html,
+            "arrow first": without_arrow.replace(
+                '<button onclick="return false;" class=navia>1</button>',
+                f'{arrow} <button onclick="return false;" class=navia>1</button>',
+            ),
+            "no arrow": without_arrow,
+        }
+
+        for name, variant in variants.items():
+            with self.subTest(name):
+                self.assertEqual(
+                    SSListParser().next_page_url(variant, LIST_URL),
+                    "https://www.ss.com/lv/real-estate/flats/riga/all/sell/page2.html",
+                )
+
+    def test_next_page_from_a_middle_page_is_the_nearest_forward_link_in_any_order(self) -> None:
+        arrow = '<a name="nav_id" rel="next" class="navi" href="page6.html">Nākamie</a>'
+        numbers = """
+            <a name="nav_id" rel="prev" class="navi" href="page4.html">Iepriekšējie</a>
+            <a name="nav_id" class="navi" href="page3.html">3</a>
+            <a name="nav_id" class="navi" href="page4.html">4</a>
+            <button class="navia">5</button>
+            <a name="nav_id" rel="next" class="navi" href="page7.html">7</a>
+            <a name="nav_id" rel="next" class="navi" href="page6.html">6</a>
+            <a name="nav_id" rel="next" class="navi" href="page13.html">13</a>
+        """
+
+        for name, html in {"arrow first": arrow + numbers, "arrow last": numbers + arrow}.items():
+            with self.subTest(name):
+                next_url = SSListParser().next_page_url(f"<div>{html}</div>", LIST_URL + "page5.html")
+
+                self.assertEqual(next_url, LIST_URL + "page6.html")
+
+    def test_wrap_around_links_are_never_the_next_page(self) -> None:
+        only_page = """
+            <a name="nav_id" rel="prev" class="navi" href="/lv/real-estate/flats/riga/all/sell/">Iepriekšējie</a>
+            <button class="navia">1</button>
+            <a name="nav_id" rel="next" class="navi" href="/lv/real-estate/flats/riga/all/sell/">Nākamie</a>
+        """
+        pager_without_numbers = """
+            <a name="nav_id" rel="prev" class="navi" href="/lv/real-estate/flats/riga/all/sell/page88.html">Iepriekšējie</a>
+            <button class="navia">1</button>
+        """
+
+        for name, html in {"only page": only_page, "numbers missing": pager_without_numbers}.items():
+            with self.subTest(name):
+                self.assertIsNone(SSListParser().next_page_url(f"<div>{html}</div>", LIST_URL))
+
     def test_list_parser_uses_next_numeric_page_hidden_behind_ellipsis(self) -> None:
         html = """
             <html><body>

@@ -165,18 +165,27 @@ class SSCrawler:
 
             total_pages = self.list_parser.max_navigation_page(list_page.text, list_page.url)
             report(LIST_PAGES, page_count, max(page_count, min(total_pages, MAX_LIST_PAGES)))
-            if limit is None and self.list_fetch_workers > 1 and total_pages > page_count:
-                remaining_pages = range(page_count + 1, min(total_pages, MAX_LIST_PAGES) + 1)
+            current_page = page_number_from_url(list_page.url)
+            window_end = min(total_pages, MAX_LIST_PAGES)
+            if limit is None and self.list_fetch_workers > 1 and window_end > current_page:
+                window = [
+                    (page, _list_page_url(list_page.url, page))
+                    for page in range(current_page + 1, window_end + 1)
+                ]
                 fetched, failed = self._fetch_list_pages_concurrently(
-                    [(page, _list_page_url(list_page.url, page)) for page in remaining_pages],
-                    lambda done: report(LIST_PAGES, page_count + done, page_count + len(remaining_pages)),
+                    window,
+                    lambda done: report(LIST_PAGES, page_count + done, page_count + len(window)),
                 )
                 failed_page_count += failed
                 for page in sorted(fetched):
-                    for summary in fetched[page]:
+                    for summary in self.list_parser.parse(fetched[page].text, fetched[page].url):
                         summaries_by_ss_id.setdefault(summary.ss_id, summary)
                 page_count += len(fetched)
-                break
+                last_page = fetched.get(window_end)
+                if last_page is None:
+                    break
+                next_url = self.list_parser.next_page_url(last_page.text, last_page.url)
+                continue
 
             if limit is not None and len(summaries_by_ss_id) >= limit:
                 truncated = True
@@ -198,27 +207,26 @@ class SSCrawler:
         self,
         page_urls: Sequence[tuple[int, str]],
         report: Callable[[int], None],
-    ) -> tuple[dict[int, list[ListingSummary]], int]:
-        fetched: dict[int, list[ListingSummary]] = {}
+    ) -> tuple[dict[int, FetchResult], int]:
+        fetched: dict[int, FetchResult] = {}
         failed_page_count = 0
         pages = {url: page_number for page_number, url in page_urls}
-        for done, (url, summaries) in enumerate(
+        for done, (url, list_page) in enumerate(
             _completed(self._fetch_list_page, list(pages), self.list_fetch_workers), start=1
         ):
             report(done)
-            if summaries is None:
+            if list_page is None:
                 failed_page_count += 1
                 continue
-            fetched[pages[url]] = summaries
+            fetched[pages[url]] = list_page
         return fetched, failed_page_count
 
-    def _fetch_list_page(self, url: str) -> list[ListingSummary] | None:
+    def _fetch_list_page(self, url: str) -> FetchResult | None:
         try:
-            list_page = self.http_client.fetch_text(url)
+            return self.http_client.fetch_text(url)
         except FetchError as error:
             logger.warning("crawl list page fetch failed, crawl is incomplete: %s", error)
             return None
-        return self.list_parser.parse(list_page.text, list_page.url)
 
     def _iter_details(
         self,

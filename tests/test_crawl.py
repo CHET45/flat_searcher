@@ -86,6 +86,56 @@ class CrawlPaginationTests(TestCase):
         self.assertEqual(len(result.payloads), 2)
 
 
+class CrawlBeyondThePagerWindowTests(TestCase):
+    LAST_PAGE = 13
+
+    def test_every_page_is_reached_when_page_one_does_not_wrap_to_the_last(self) -> None:
+        for workers in (1, 4):
+            for arrow in (True, False):
+                with self.subTest(workers=workers, arrow=arrow):
+                    client = FakeHttpClient(_windowed_site(self.LAST_PAGE, arrow=arrow))
+
+                    result = SSCrawler(START_URL, client, list_fetch_workers=workers).crawl()
+
+                    self.assertTrue(result.complete)
+                    self.assertEqual(result.page_count, self.LAST_PAGE)
+                    self.assertEqual(
+                        result.seen_ss_ids, frozenset(str(5000 + n) for n in range(1, self.LAST_PAGE + 1))
+                    )
+
+    def test_a_page_past_the_window_that_fails_leaves_the_crawl_incomplete(self) -> None:
+        for workers in (1, 4):
+            for missing in (5, 9, 10, self.LAST_PAGE):
+                with self.subTest(workers=workers, missing=missing):
+                    pages = _windowed_site(self.LAST_PAGE, arrow=True)
+                    del pages[_page_url(missing)]
+                    client = FakeHttpClient(pages)
+
+                    result = SSCrawler(START_URL, client, list_fetch_workers=workers).crawl()
+
+                    self.assertFalse(result.complete)
+                    self.assertNotIn(str(5000 + missing), result.seen_ss_ids)
+                    list_requests = [url for url in client.requested_urls if "/msg/" not in url]
+                    self.assertEqual(len(list_requests), len(set(list_requests)))
+
+
+    def test_fast_discovery_ends_at_a_full_last_page_without_probing_past_it(self) -> None:
+        nav = '<div><a name="nav_id" rel="next" class="navi" href="page2.html">2</a></div>'
+        client = FakeHttpClient(
+            {
+                START_URL: _list_page_many(0, 30).replace("</table>", f"</table>{nav}"),
+                PAGE_2_URL: _list_page_many(30, 30),
+                **{f"https://www.ss.com/msg/lv/{index}.html": _detail_page("Flat.") for index in range(60)},
+            }
+        )
+
+        result = SSCrawler(START_URL, client, list_fetch_workers=4).crawl()
+
+        self.assertTrue(result.complete)
+        self.assertEqual(result.seen_count, 60)
+        self.assertEqual([url for url in client.requested_urls if "/msg/" not in url], [START_URL, PAGE_2_URL])
+
+
 class CrawlFailureTests(TestCase):
     def test_failed_list_page_marks_the_crawl_incomplete_and_keeps_parsed_listings(self) -> None:
         client = FakeHttpClient(
@@ -265,6 +315,32 @@ def _list_page_many(start: int, count: int) -> str:
         for offset in range(count)
     )
     return f"<html><body><table>{rows}</table></body></html>"
+
+
+def _page_url(page: int) -> str:
+    return START_URL if page == 1 else f"{START_URL}page{page}.html"
+
+
+def _windowed_site(last_page: int, arrow: bool) -> dict[str, str]:
+    """SS-style pager: numbers up to eight pages ahead, every forward link `rel="next"`,
+    and no wrap-around from page 1 to the last page."""
+    pages: dict[str, str] = {}
+    for page in range(1, last_page + 1):
+        links = []
+        if page > 1:
+            links.append(f'<a name="nav_id" rel="prev" class="navi" href="{_page_url(page - 1)}">Iepriekšējie</a>')
+        for number in range(max(1, page - 4), min(last_page, page + 8) + 1):
+            if number == page:
+                links.append(f'<button class="navia">{page}</button>')
+            else:
+                rel = ' rel="next"' if number > page else ""
+                links.append(f'<a name="nav_id"{rel} class="navi" href="{_page_url(number)}">{number}</a>')
+        if arrow and page < last_page:
+            links.append(f'<a name="nav_id" rel="next" class="navi" href="{_page_url(page + 1)}">Nākamie</a>')
+        listing = _list_page(page, str(5000 + page), f"/msg/lv/{5000 + page}.html")
+        pages[_page_url(page)] = listing.replace(f'<button class="navia">{page}</button>', "".join(links))
+        pages[f"https://www.ss.com/msg/lv/{5000 + page}.html"] = _detail_page("Flat.")
+    return pages
 
 
 def _detail_page(description: str) -> str:

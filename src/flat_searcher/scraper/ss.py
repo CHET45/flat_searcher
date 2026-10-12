@@ -31,32 +31,19 @@ class SSListParser:
     def next_page_url(self, html: str, base_url: str) -> str | None:
         root = parse_html(html)
         current_page = _active_navigation_page(root) or page_number_from_url(base_url)
-        numeric_candidates: list[tuple[int, str]] = []
-        next_label_candidate: str | None = None
-
+        forward: list[tuple[int, str]] = []
         for link in root.find_all(_is_navigation_link):
             href = link.attr("href")
             if not href:
                 continue
+            text = (clean_text(link.text_content()) or "").lower()
+            if any(word in text for word in _PREVIOUS_PAGE_WORDS):
+                continue
             absolute_url = urljoin(base_url, href)
             target_page = page_number_from_url(absolute_url)
-            text = clean_text(link.text_content()) or ""
-            normalized = text.lower()
-
-            if any(word in normalized for word in _PREVIOUS_PAGE_WORDS):
-                continue
-            if any(word in normalized for word in _NEXT_PAGE_WORDS) or (link.attr("rel") or "").lower() == "next":
-                if target_page > current_page:
-                    next_label_candidate = absolute_url
-                    continue
             if target_page > current_page:
-                numeric_candidates.append((target_page, absolute_url))
-
-        if next_label_candidate is not None:
-            return next_label_candidate
-        if numeric_candidates:
-            return min(numeric_candidates, key=lambda item: item[0])[1]
-        return None
+                forward.append((target_page, absolute_url))
+        return min(forward, key=lambda item: item[0])[1] if forward else None
 
     def max_navigation_page(self, html: str, base_url: str) -> int:
         root = parse_html(html)
@@ -181,16 +168,6 @@ def _is_listing_row(node: HtmlNode) -> bool:
     return node.tag == "tr" and bool(row_id and row_id.startswith("tr_"))
 
 
-_NEXT_PAGE_WORDS = frozenset(
-    (
-        "next",
-        "nākam",
-        "talak",
-        "tālāk",
-        "след",
-        "dalje",
-    )
-)
 _PREVIOUS_PAGE_WORDS = frozenset(
     (
         "prev",
