@@ -331,7 +331,8 @@ kitchen open to the living room in a new build (series `Jaun.`, `Renov.`) do not
 are the seller's words, not a check of any register.
 
 **Ordering**, no score: price band (list order) → rooms (list order, unknown last) → layout
-(isolated from the text › isolated by series prior › unknown › walk-through by series ›
+(both rooms isolated from the text › isolated by series prior or one isolated room in the text
+› unknown › walk-through by series ›
 walk-through from the text) → number of targets reached directly → a gym within `gym_max_min`
 (on foot, or by transit counting half the headway; flats without surroundings count as near) →
 €/m² relative to the district median → price. Every column of that key is shown in the digest row.
@@ -351,8 +352,10 @@ stops and streets; loaded with Leaflet from cdnjs only when the Map tab opens, s
 without either) and `photos/<ss_id>.jpg` (thumbnails, `.t.jpg`, ~5 KB, cached under
 `$FLAT_SEARCHER_HOME/cache/thumbnails/`, loaded lazily).
 
-- One card per flat: ads with the same building, floor, area and rooms and prices within 10 %
-  share a card that lists the other ads and their prices.
+- One card per flat: ads with the same building, floor and rooms share a card that lists the
+  other ads and their prices when the area is the same and the prices are within 10 %, or the
+  price is the same and the areas are within 1 m² (two sellers measuring one flat). A shared text
+  or shared photos are no evidence: developers post one text and one gallery for many flats.
 - **Today** (the default view): candidates that pass the soft rules of `[today]`, a way to every
   target and no implausible-price or room-size alert; among them the flats no other beats at once
   on price, the summed expected journey time, floor area, building wear (V1–V5; a new build
