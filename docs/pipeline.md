@@ -178,7 +178,8 @@ python -m flat_searcher judge --day 2026-09-14 --max-price 120000 --min-rooms 2 
 
 The runner sends the instructions as the system prompt, the queue entry as the user message with
 up to eight gallery images attached, and Ollama's structured-output schema so the verdict keys are
-guaranteed. Thinking is off and the context is 12k tokens — that keeps a 9B model on an 8 GB GPU
+guaranteed. The entry is fenced between `<listing>` and `</listing>` as data; tag-like text in
+the seller's own words is JSON-escaped, so it reads the same but cannot close the fence. Thinking is off and the context is 12k tokens — that keeps a 9B model on an 8 GB GPU
 at roughly 20–30 seconds per listing. Verdicts are appended one at a time, so an interrupted run
 loses nothing and a rerun skips what is already judged; three consecutive failures abort the run.
 
