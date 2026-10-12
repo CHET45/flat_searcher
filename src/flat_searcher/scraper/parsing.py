@@ -3,13 +3,12 @@
 from __future__ import annotations
 
 import re
-from html import unescape
 
 
 def clean_text(value: str | None) -> str | None:
     if value is None:
         return None
-    normalized = unescape(value).replace("\xa0", " ")
+    normalized = value.replace("\xa0", " ")
     normalized = re.sub(r"[ \t\r\f\v]+", " ", normalized)
     normalized = re.sub(r"\n\s+", "\n", normalized)
     normalized = normalized.strip()

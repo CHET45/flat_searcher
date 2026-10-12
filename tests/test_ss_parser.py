@@ -67,6 +67,36 @@ class SSParserTests(TestCase):
         self.assertEqual(payload.house_number, "87")
         self.assertGreater(len(payload.image_urls), 10)
 
+    def test_detail_text_is_unescaped_exactly_once(self) -> None:
+        html = (FIXTURES / "detail_page.html").read_text(encoding="utf-8")
+        html = html.replace(
+            '<div id="msg_div_msg">',
+            '<div id="msg_div_msg">See https://example.lv/x?a=1&amp;copy=2&amp;reg=3 '
+            "where &amp;lt; is written as &lt; and Q&amp;A stays.<br>",
+            1,
+        ).replace("<b>Stabu 87</b>", "<b>Brīvības &amp;amp; Co 87</b>", 1)
+
+        detail = SSDetailParser().parse(html)
+
+        description = detail.description_text or ""
+        self.assertIn("https://example.lv/x?a=1&copy=2&reg=3", description)
+        self.assertIn("where &lt; is written as < and Q&A stays.", description)
+        self.assertEqual(detail.detail_fields["Iela"], "Brīvības &amp; Co 87")
+        self.assertEqual(detail.street, "Brīvības &amp; Co")
+
+    def test_list_text_is_unescaped_exactly_once(self) -> None:
+        html = (FIXTURES / "list_page.html").read_text(encoding="utf-8")
+        html = html.replace(
+            'class="am" href="/msg/lv/real-estate/flats/riga/plyavnieki/becigg.html">',
+            'class="am" href="/msg/lv/real-estate/flats/riga/plyavnieki/becigg.html">&amp;lt;3 &amp;copy ',
+            1,
+        ).replace("Pļavnieki<br>Grestes 4", "Pļavnieki<br>Grestes &amp;reg 4", 1)
+
+        summary = next(s for s in SSListParser().parse(html, LIST_URL) if s.ss_id == "57778276")
+
+        self.assertTrue((summary.title or "").startswith("&lt;3 &copy Īpašnieks"))
+        self.assertEqual(summary.street, "Grestes &reg 4")
+
     def test_list_parser_uses_next_numeric_page_hidden_behind_ellipsis(self) -> None:
         html = """
             <html><body>

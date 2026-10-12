@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 from dataclasses import dataclass, field
-from html import unescape
 from html.parser import HTMLParser
 from typing import Callable, Iterable
 
@@ -108,7 +107,7 @@ def parse_html(html: str) -> HtmlNode:
 
 def _normalize_text(value: str) -> str:
     lines = []
-    for line in unescape(value).replace("\xa0", " ").splitlines():
+    for line in value.replace("\xa0", " ").splitlines():
         normalized_line = " ".join(line.split())
         if normalized_line:
             lines.append(normalized_line)
