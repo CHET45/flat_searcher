@@ -14,6 +14,9 @@ DEFAULT_BASE_URL = "http://127.0.0.1:11434"
 DEFAULT_MODEL = "qwen3.5:9b"
 # 12k keeps a 9B model almost entirely on an 8 GB GPU; the prompt with eight images is ~9k.
 DEFAULT_NUM_CTX = 12288
+# Without images the prompt is ~6k tokens; two images and a full answer need the rest.
+MIN_NUM_CTX = 8192
+NUM_CTX_RULE = f"The context size must be a whole number of at least {MIN_NUM_CTX} tokens"
 # A valid verdict is 350-500 tokens; the cap turns a loop into a fast failure,
 # and the repeat penalty makes loops rare to begin with.
 NUM_PREDICT = 1200
@@ -33,6 +36,8 @@ class OllamaJudgeClient:
         timeout_seconds: float = 900.0,
         keep_alive: str = "30m",
     ) -> None:
+        if num_ctx < MIN_NUM_CTX:
+            raise ValueError(NUM_CTX_RULE)
         self.base_url = base_url.rstrip("/")
         self.model = model
         self.num_ctx = num_ctx

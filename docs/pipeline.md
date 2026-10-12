@@ -179,7 +179,8 @@ python -m flat_searcher judge --day 2026-09-14 --max-price 120000 --min-rooms 2 
 The runner sends the instructions as the system prompt, the queue entry as the user message with
 up to eight gallery images attached, and Ollama's structured-output schema so the verdict keys are
 guaranteed. The entry is fenced between `<listing>` and `</listing>` as data; tag-like text in
-the seller's own words is JSON-escaped, so it reads the same but cannot close the fence. Thinking is off and the context is 12k tokens — that keeps a 9B model on an 8 GB GPU
+the seller's own words is JSON-escaped, so it reads the same but cannot close the fence.
+Thinking is off and the context is 12k tokens by default — that keeps a 9B model on an 8 GB GPU
 at roughly 20–30 seconds per listing. Verdicts are appended one at a time, so an interrupted run
 loses nothing and a rerun skips what is already judged; three consecutive failures abort the run.
 
@@ -196,10 +197,17 @@ too large, the runner retries with half the images.
 Useful switches: `--ids 123,456 --force` re-judges specific listings (a verdict appended later
 wins on merge); `--shard 0/2` and `--shard 1/2` let two processes split one queue. Sharding only
 pays when the whole model sits in VRAM — with any part on the CPU the two requests serialise and
-the pace is unchanged (measured: 22.7 s vs 23 s per listing). Ollama keeps one loaded copy per
-`(model, num_ctx)`; another local client using the same model with a different context size
-forces a reload on every alternation (measured 23 → 40 s per listing), so run such jobs
-sequentially or give them the same `num_ctx`.
+the pace is unchanged (measured: 22.7 s vs 23 s per listing).
+
+The context size is 12,288 tokens unless `--num-ctx` or `FLAT_SEARCHER_JUDGE_NUM_CTX` (which the
+`daily` judge step reads too, from the environment or `.env`) says otherwise; anything below
+8,192 is refused, because the prompt without images is already about 6k tokens and the answer
+needs 1,200 more. Ollama keeps one loaded copy per `(model, num_ctx)`; another local client using
+the same model with a different context size forces a reload on every alternation (measured
+23 → 40 s per listing). The rule: jobs that share a model on this machine either run one after
+the other or use the same context size — set `FLAT_SEARCHER_JUDGE_NUM_CTX` to the other job's
+value (8,192 still fits two images; the halving retry gets there by itself) or raise the other
+job to 12,288, and the two then share one loaded model and simply queue.
 
 ## Shortlist: transit and digest
 

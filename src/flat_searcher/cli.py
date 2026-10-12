@@ -33,6 +33,7 @@ from flat_searcher.daily.run import DailyRun, Step, StepContext, StepResult
 from flat_searcher.indexing import IndexerOptions, IndexerRun, merge_verdicts
 from flat_searcher.judging import JudgeFilters, JudgeOptions, JudgeRun, OllamaJudgeClient
 from flat_searcher.judging.ollama import DEFAULT_MODEL as OLLAMA_DEFAULT_MODEL
+from flat_searcher.judging.ollama import DEFAULT_NUM_CTX, NUM_CTX_RULE
 from flat_searcher.library import (
     GitLibraryStore,
     LibraryError,
@@ -54,6 +55,7 @@ LIBRARY_REPO_VARIABLE = "FLAT_SEARCHER_LIBRARY_REPO"
 LIBRARY_TOKEN_VARIABLE = "FLAT_SEARCHER_LIBRARY_TOKEN"
 LIBRARY_BRANCH_VARIABLE = "FLAT_SEARCHER_LIBRARY_BRANCH"
 GPU_BUSY_VARIABLE = "FLAT_SEARCHER_GPU_BUSY_PROCESSES"
+JUDGE_NUM_CTX_VARIABLE = "FLAT_SEARCHER_JUDGE_NUM_CTX"
 NETWORK_PROBE_HOST = "www.ss.com"
 NETWORK_POLL_SECONDS = 15.0
 
@@ -103,6 +105,13 @@ def build_parser() -> argparse.ArgumentParser:
         "--model",
         default=OLLAMA_DEFAULT_MODEL,
         help=f"Ollama model name. Default: {OLLAMA_DEFAULT_MODEL}.",
+    )
+    judge_parser.add_argument(
+        "--num-ctx",
+        type=int,
+        default=None,
+        help=f"Model context size in tokens. Default: {JUDGE_NUM_CTX_VARIABLE}, else "
+        f"{DEFAULT_NUM_CTX}. Other jobs on the same model should use the same size.",
     )
     judge_parser.add_argument(
         "--limit",
@@ -319,7 +328,11 @@ def _run_judge(config: AppConfig, args: argparse.Namespace) -> int:
     if day is None:
         print("No queue in the library yet; run `index` first.")
         return 1
-    client = OllamaJudgeClient(model=args.model)
+    try:
+        client = _judge_client(args.model, args.num_ctx)
+    except ValueError as error:
+        print(f"{error}: check --num-ctx or {JUDGE_NUM_CTX_VARIABLE}.")
+        return 2
     if not client.available():
         print(f"Ollama is not reachable at {client.base_url}; start it with `ollama serve`.")
         return 1
@@ -360,6 +373,15 @@ def _run_judge(config: AppConfig, args: argparse.Namespace) -> int:
         store.push(f"Judge {day}")
         print("Library pushed.")
     return 0 if result.ok else 1
+
+
+def _judge_client(model: str = OLLAMA_DEFAULT_MODEL, num_ctx: int | None = None) -> OllamaJudgeClient:
+    if num_ctx is None:
+        text = os.environ.get(JUDGE_NUM_CTX_VARIABLE, "")
+        if text and not (text.isascii() and text.isdigit()):
+            raise ValueError(NUM_CTX_RULE)
+        num_ctx = int(text) if text else DEFAULT_NUM_CTX
+    return OllamaJudgeClient(model=model, num_ctx=num_ctx)
 
 
 def _load_criteria(store: LibraryStore) -> tuple[Criteria | None, bool]:
@@ -586,7 +608,10 @@ def _daily_steps(config: AppConfig, day: str) -> list[Step]:
         criteria = None if store is None else _load_criteria(store)[0]
         if store is None or criteria is None:
             return StepResult(SKIPPED, "no library or criteria", {"judged": 0})
-        client = OllamaJudgeClient()
+        try:
+            client = _judge_client()
+        except ValueError as error:
+            return StepResult(FAILED, f"{error}: check {JUDGE_NUM_CTX_VARIABLE}", {"judged": 0})
         guard = GpuGuard(
             client.loaded_vram_mib,
             busy_patterns=os.environ.get(GPU_BUSY_VARIABLE, "").split(","),

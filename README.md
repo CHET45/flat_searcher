@@ -73,6 +73,7 @@ shortcuts on the desktop: the progress window and an on/off switch.
 | `FLAT_SEARCHER_HOME` | Caches and logs; defaults to `~/.flat_searcher`. |
 | `FLAT_SEARCHER_PAGES_REPO`, `_PAGES_TOKEN` | GitHub Pages repository for `publish`. |
 | `FLAT_SEARCHER_GPU_BUSY_PROCESSES` | Comma-separated command-line substrings of programs that `daily` must not share the graphics card with. |
+| `FLAT_SEARCHER_JUDGE_NUM_CTX` | The judge's model context size in tokens (default 12288, at least 8192); match any other job using the same model, or Ollama reloads it on every switch. |
 
 Variables may also come from `.env` in the working directory or a file passed with `--env-file`.
 The CLI prints counts and stage outcomes only — never a URL, token, path or target name.

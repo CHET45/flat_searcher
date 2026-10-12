@@ -48,7 +48,7 @@ from flat_searcher.daily.run import (
 from flat_searcher.library import LocalLibraryStore
 from flat_searcher.logging_config import configure_logging
 from flat_searcher.shortlist.criteria import parse_criteria
-from test_judging import FakeAsk, FakeFetcher, _entry
+from test_judging import FakeAsk, FakeFetcher, _entry, _model_output, _record
 
 DAY = "2026-10-07"
 
@@ -720,6 +720,120 @@ class DailyCommandTests(TestCase):
         merged = run("merge", 1)
         self.assertEqual((merged.status, merged.summary), (DONE, "merged=1 unknown=0"))
         self.assertEqual(store.load_listings()["a1"]["judgment"]["score"], 70)
+
+
+class FakeOllama:
+    """Stands in for urlopen against Ollama and keeps every chat request body."""
+
+    def __init__(self) -> None:
+        self.chats: list[dict] = []
+        self.requests = 0
+
+    def __call__(self, request, timeout=None):
+        self.requests += 1
+        url = request if isinstance(request, str) else request.full_url
+        answer: dict = {}
+        if url.endswith("/api/chat"):
+            self.chats.append(json.loads(request.data))
+            answer = {"message": {"content": json.dumps(_model_output())}, "done_reason": "stop", "eval_count": 400}
+        body = json.dumps(answer).encode("utf-8")
+
+        class Response:
+            status = 200
+
+            def read(self) -> bytes:
+                return body
+
+            def __enter__(self):
+                return self
+
+            def __exit__(self, *args) -> None:
+                pass
+
+        return Response()
+
+
+class JudgeContextSizeTests(TestCase):
+    def setUp(self) -> None:
+        self._temp = tempfile.TemporaryDirectory()
+        self.home = Path(self._temp.name)
+        self.library = self.home / "library"
+        self.env_file = self.home / "settings.env"
+        store = LocalLibraryStore(self.library)
+        store.save_listings({"a1": _record("a1", price=40000, images=0)})
+        store.write_queue(DAY, [_entry("a1", price=40000, images=0)])
+        (self.library / "criteria.toml").write_text("[price]\nmax_eur = 60000\n", encoding="utf-8")
+        environment = {
+            "FLAT_SEARCHER_HOME": str(self.home),
+            "FLAT_SEARCHER_LIBRARY_PATH": str(self.library),
+            "FLAT_SEARCHER_ENV_FILE": str(self.env_file),
+        }
+        shell = {key: os.environ[key] for key in ("PATH", "SYSTEMROOT") if key in os.environ}
+        self._env = patch.dict(os.environ, {**shell, **environment}, clear=True)
+        self._env.start()
+        self.ollama = FakeOllama()
+        self._urlopen = patch("flat_searcher.judging.ollama.urlopen", self.ollama)
+        self._urlopen.start()
+
+    def tearDown(self) -> None:
+        self._urlopen.stop()
+        configure_logging()
+        self._env.stop()
+        self._temp.cleanup()
+
+    def _judge(self, *options: str) -> tuple[int, str]:
+        output = io.StringIO()
+        with contextlib.redirect_stdout(output), contextlib.redirect_stderr(io.StringIO()):
+            try:
+                code = main(["judge", "--dry-run", *options])
+            except SystemExit as exit:
+                code = exit.code
+        return code, output.getvalue()
+
+    def _daily_judge(self) -> StepResult:
+        from flat_searcher.cli import _daily_steps
+        from flat_searcher.config import AppConfig
+
+        steps = {step.name: step for step in _daily_steps(AppConfig.from_env(), DAY)}
+        progress = _progress(self.home)
+        progress.begin(DAY, [("judge", "Judge")], pid=1)
+        progress.start_step("judge")
+        context = StepContext(progress, "judge", lambda: False, {}, lambda _: None)
+        with patch("flat_searcher.cli.GpuGuard", lambda *args, **kwargs: FakeGuard([])):
+            return steps["judge"].action(context)
+
+    def _context_sizes(self) -> list[int]:
+        return [chat["options"]["num_ctx"] for chat in self.ollama.chats]
+
+    def test_judge_keeps_the_default_context_size(self) -> None:
+        self.assertEqual(self._judge()[0], 0)
+        self.assertEqual(self._context_sizes(), [12288])
+
+    def test_judge_takes_the_context_size_from_the_option_before_the_environment(self) -> None:
+        self.env_file.write_text("FLAT_SEARCHER_JUDGE_NUM_CTX=16384\n", encoding="utf-8")
+        self.assertEqual(self._judge()[0], 0)
+        self.assertEqual(self._judge("--num-ctx", "8192")[0], 0)
+        self.assertEqual(self._context_sizes(), [16384, 8192])
+
+    def test_the_daily_judge_step_takes_the_context_size_from_the_environment(self) -> None:
+        self.env_file.write_text("FLAT_SEARCHER_JUDGE_NUM_CTX=8192\n", encoding="utf-8")
+        result = self._daily_judge()
+        self.assertEqual((result.status, dict(result.data)), (DONE, {"judged": 1}))
+        self.assertEqual(self._context_sizes(), [8192])
+
+    def test_a_context_size_too_small_or_not_a_number_is_refused_before_ollama_is_called(self) -> None:
+        for value in ("8191", "0", "-12288", "12k", "1e4", "²"):
+            with self.subTest(value=value):
+                self.assertEqual(self._judge("--num-ctx", value)[0], 2)
+                os.environ["FLAT_SEARCHER_JUDGE_NUM_CTX"] = value
+                code, output = self._judge()
+                self.assertEqual(code, 2)
+                self.assertIn("FLAT_SEARCHER_JUDGE_NUM_CTX", output)
+                self.assertIn("8192", output)
+                result = self._daily_judge()
+                self.assertEqual((result.status, dict(result.data)), (FAILED, {"judged": 0}))
+                self.assertIn("8192", result.summary)
+        self.assertEqual(self.ollama.requests, 0)
 
 
 class ProgressFileWritesTests(TestCase):
